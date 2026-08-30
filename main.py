@@ -3525,6 +3525,40 @@ def _sleep_compatibility_status(status_obj: dict) -> dict:
     }
 
 
+def _device_presence_fingerprint(status: dict) -> dict:
+    egpu = (status or {}).get("egpu") or {}
+    return {
+        "connected": bool((status or {}).get("connected") and egpu),
+        "pci": str(egpu.get("pci") or "").lower(),
+        "vendor": str(egpu.get("vendor") or "").lower(),
+        "device": str(egpu.get("device") or "").lower(),
+    }
+
+
+def _record_device_presence_transition(previous: dict, current: dict):
+    """Emit one structured hot-plug event when the persisted status changes."""
+    if not previous:
+        return
+    before = _device_presence_fingerprint(previous)
+    after = _device_presence_fingerprint(current)
+    if before == after:
+        return
+    if before.get("connected"):
+        log_event(
+            "device.removed",
+            pci=before.get("pci"),
+            vendor=before.get("vendor"),
+            device=before.get("device"),
+        )
+    if after.get("connected"):
+        log_event(
+            "device.arrived",
+            pci=after.get("pci"),
+            vendor=after.get("vendor"),
+            device=after.get("device"),
+        )
+
+
 def build_status(heavy: bool = False):
     cards = scan_cards()
     egpu = pick_egpu(cards)
@@ -3757,6 +3791,14 @@ def build_status(heavy: bool = False):
         status["active_vendor"] = "unknown"
 
     try:
+        previous_status = json.loads(STATUS_PATH.read_text(encoding="utf-8")) if STATUS_PATH.exists() else {}
+        if not isinstance(previous_status, dict):
+            previous_status = {}
+    except Exception:
+        previous_status = {}
+
+    try:
+        _record_device_presence_transition(previous_status, status)
         atomic_write(STATUS_PATH, json.dumps(status, indent=2, ensure_ascii=False))
     except Exception:
         pass

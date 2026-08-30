@@ -112,7 +112,8 @@ Video reference:
 
 ### EGB-003 - Replace both unsafe disconnect implementations
 
-Status: In progress - guarded release enabled for controlled Ally X/GPD G1 hardware validation
+Status: Guarded GPD G1 release implemented and hardware-validated on 2026-08-30;
+legacy unsafe paths remain permanently disabled
 
 `prepare_for_unplug` restarts SDDM, sleeps eight seconds, and announces readiness
 without proving that the internal panel is active or that the eGPU is idle. The
@@ -162,6 +163,9 @@ Current safe foundation:
 - The misleading disabled eject control is replaced by a read-only Disconnect
   Check. Both the title-bar icon and Recovery / Safety row show the same visible
   blocker report and explicitly confirm that no hardware was disconnected.
+- The guarded operation passed its first live release, physical unplug, and hot
+  reconnect cycle. The Ally remained usable, the internal display stayed active,
+  and the G1 re-enumerated successfully.
 
 ## P1 - privileged hardware controls
 
@@ -298,7 +302,7 @@ Relevant code: [`main.py`](../main.py#L4835)
 
 ### EGB-014 - Make the frontend reproducible
 
-Status: Implemented in `codex/decky-native-foundation`; hardware validation pending
+Status: Implemented, deployed, and hardware-validated on ROG Ally X
 
 The repository previously had no source-to-dist verification. The native
 foundation makes `src/index.tsx` authoritative, generates `dist/index.js` through
@@ -306,7 +310,8 @@ the official Decky Rollup preset, and makes CI fail when generated output drifts
 
 ### EGB-015 - Replace the copied full Gamescope session script
 
-Status: Implemented with a small argument shim and user-systemd drop-in; hardware validation pending
+Status: Implemented with a small argument shim and user-systemd drop-in;
+external/internal hardware validation passed
 
 The bundled wrapper is a complete distribution session script and can drift from
 SteamOS. It also contains unrelated low-disk cleanup logic. Replace it with the
@@ -318,7 +323,7 @@ Relevant code: [`bin/gamescope`](../bin/gamescope)
 
 ### EGB-016 - Expand deterministic tests
 
-Status: In progress - deterministic coverage expanded from 7 to 27 tests
+Status: In progress - deterministic backend coverage expanded from 7 to 68 tests
 
 Add tests for exact device selection, topology-safe disconnect, transition-state
 recovery, reload idempotency, connector detection failures, tuning bounds,
@@ -393,7 +398,7 @@ Relevant code: [`src/index.tsx`](../src/index.tsx)
 
 ### EGB-019 - Separate the Decky runtime directory from legacy plugin state
 
-Status: Implemented and runtime discovery verified on ROG Ally X; deployment migration pending
+Status: Implemented; runtime discovery and preserved-state deployment verified on ROG Ally X
 
 Decky can install a release into a versioned directory such as
 `eGPUBridge-v0.3.alfa` while the installed backend continues to store settings and
@@ -406,7 +411,7 @@ Relevant code: [`scripts/ally-remote-test.ps1`](../scripts/ally-remote-test.ps1)
 
 ### EGB-020 - Sanitize Decky's bundled library environment for system commands
 
-Status: Implemented with regression coverage; hardware validation pending
+Status: Implemented with regression coverage and validated through live Mesa/status polling
 
 Live diagnostics showed `pacman -Q mesa` loading a PyInstaller copy of
 `libssl.so.3` from `/tmp/_MEI*` and failing its SteamOS OpenSSL version check.
@@ -460,7 +465,8 @@ summarize repeated identical events instead of flooding the operator console.
 
 ### EGB-024 - Reconcile powered-off eGPU removal cleanly
 
-Status: Open - reproduced after a successful internal-display restore 2026-08-30
+Status: Guarded removal and hot-plug reconciliation implemented and
+hardware-validated; uncontrolled power-off kernel cleanup noise remains observable
 
 After Gamescope had returned to `-O *,eDP-1` and eGPU preference was disabled,
 powering off and disconnecting the G1 produced repeated AMDGPU cleanup failures,
@@ -472,6 +478,14 @@ This reinforces EGB-003: a future safe-unplug workflow must prove that no render
 queues or processes remain on the exact eGPU, then observe device removal with a
 bounded timeout. Diagnostics should distinguish expected hot-removal noise from
 a device that remains stuck or disrupts the internal session.
+
+The guarded release now performs that proof and bounded removal verification, and
+its first physical unplug/reconnect cycle passed. Status persistence now emits one
+structured `device.removed` or `device.arrived` event when the exact PCI identity
+changes instead of inferring hot-plug state from repeated log lines. Unexpected
+AMDGPU/AER cleanup messages remain kernel evidence for support diagnostics; the
+plugin cannot make an uncontrolled power cut clean and continues to direct users
+through Disconnect Check and Release G1.
 
 ### EGB-025 - Clarify requested render resolution versus physical TV mode
 
@@ -495,7 +509,7 @@ A regression test locks that precedence.
 
 ### EGB-027 - Report total Game Mode restart time
 
-Status: Implemented after hardware capture 2026-08-30; hardware revalidation pending
+Status: Implemented and hardware-validated during native external/internal handoffs
 
 The transition record reported readiness polling times of 0.017 seconds external
 and 0.015 seconds internal, while the durable transition timestamps show the full
@@ -675,7 +689,7 @@ window, and the manual Refresh button was not needed.
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Forty-five deterministic tests and CI checks are passing locally.
+- Sixty-eight deterministic backend tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 

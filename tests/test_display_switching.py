@@ -82,6 +82,21 @@ class DisplayTargetTests(unittest.TestCase):
             "internal",
         )
 
+    def test_hotplug_presence_changes_emit_structured_arrival_and_removal_events(self):
+        disconnected = {"connected": False, "egpu": None}
+        connected = {
+            "connected": True,
+            "egpu": {"pci": "0000:08:00.0", "vendor": "0x1002", "device": "0x7480"},
+        }
+        with mock.patch.object(main, "log_event") as event_mock:
+            main._record_device_presence_transition(disconnected, connected)
+            main._record_device_presence_transition(connected, connected)
+            main._record_device_presence_transition(connected, disconnected)
+
+        self.assertEqual(event_mock.call_count, 2)
+        self.assertEqual(event_mock.call_args_list[0].args[0], "device.arrived")
+        self.assertEqual(event_mock.call_args_list[1].args[0], "device.removed")
+
 
 class SystemCommandTests(unittest.TestCase):
     def test_mesa_version_is_cached_across_status_refreshes(self):

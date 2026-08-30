@@ -3810,6 +3810,8 @@ _display_restart_jobs_lock = threading.Lock()
 _resume_watcher_stop = None
 _resume_watcher_thread = None
 _resume_recovery_lock = threading.Lock()
+RESUME_POLL_INTERVAL_SECONDS = 2.0
+RESUME_GAP_THRESHOLD_SECONDS = 1.0
 
 
 def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: float = 1.0) -> dict:
@@ -3982,23 +3984,40 @@ def _recover_after_resume(
         _resume_recovery_lock.release()
 
 
+def _suspend_inclusive_clock():
+    """Return a clock that advances during suspend and its diagnostic label."""
+    clock_id = getattr(time, "CLOCK_BOOTTIME", None)
+    clock_gettime = getattr(time, "clock_gettime", None)
+    if clock_id is not None and clock_gettime is not None:
+        try:
+            return float(clock_gettime(clock_id)), "boottime_monotonic_gap"
+        except Exception:
+            pass
+    return time.time(), "wall_monotonic_gap"
+
+
 def _resume_watcher_loop(stop_event):
-    last_wall = time.time()
+    last_inclusive, clock_source = _suspend_inclusive_clock()
     last_monotonic = time.monotonic()
-    while not stop_event.wait(2.0):
-        now_wall = time.time()
+    while not stop_event.wait(RESUME_POLL_INTERVAL_SECONDS):
+        now_inclusive, now_source = _suspend_inclusive_clock()
         now_monotonic = time.monotonic()
-        wall_elapsed = now_wall - last_wall
+        if now_source != clock_source:
+            last_inclusive = now_inclusive
+            last_monotonic = now_monotonic
+            clock_source = now_source
+            continue
+        inclusive_elapsed = now_inclusive - last_inclusive
         monotonic_elapsed = now_monotonic - last_monotonic
-        suspended_seconds = wall_elapsed - monotonic_elapsed
-        last_wall = now_wall
+        suspended_seconds = max(0.0, inclusive_elapsed - monotonic_elapsed)
+        last_inclusive = now_inclusive
         last_monotonic = now_monotonic
-        if suspended_seconds < 5.0:
+        if suspended_seconds < RESUME_GAP_THRESHOLD_SECONDS:
             continue
         _write_resume_state(
             "resume_detected",
             {
-                "source": "wall_monotonic_gap",
+                "source": clock_source,
                 "suspended_seconds": round(suspended_seconds, 3),
             },
         )

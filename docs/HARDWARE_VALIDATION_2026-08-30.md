@@ -76,6 +76,15 @@ rendering continued. This should first be compared using a reseated cable, a
 known-certified USB4 cable, and the Ally's other USB4 port before considering any
 kernel workaround.
 
+An attached-G1 suspend test later entered `s2idle` at 13:53:56 and 13:54:11, then
+resumed about four seconds after each attempt without operator input. The resume
+path reported `BadTLP`, non-fatal `ACSViol`, failed xHCI recovery at
+`0000:09:00.0`, and spurious PCIe PME interrupts. The Ally USB4 tunnel
+`0000:00:03.1` and G1 Titan Ridge xHCI controller `0000:09:00.0` were both
+wake-enabled. This identifies the USB4 path as the leading area for controlled
+wake-source isolation, but the initiating device is not yet proven. It also
+exposed and led to a fix for the resume observer's former five-second threshold.
+
 Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
 The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and
 EGB-024 track the safe-unplug and removal-reconciliation work.

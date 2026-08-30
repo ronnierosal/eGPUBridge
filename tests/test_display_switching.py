@@ -472,6 +472,32 @@ class MissingEgpuRecoveryTests(unittest.TestCase):
 
 
 class ResumeRecoveryTests(unittest.TestCase):
+    def test_resume_watcher_detects_a_short_s2idle_cycle(self):
+        stop_event = mock.Mock()
+        stop_event.wait.side_effect = [False, True]
+        with mock.patch.object(
+            main,
+            "_suspend_inclusive_clock",
+            side_effect=[
+                (100.0, "boottime_monotonic_gap"),
+                (104.0, "boottime_monotonic_gap"),
+            ],
+        ), mock.patch.object(
+            main.time, "monotonic", side_effect=[50.0, 51.0]
+        ), mock.patch.object(main, "_write_resume_state") as state_mock, mock.patch.object(
+            main, "_recover_after_resume"
+        ) as recover_mock:
+            main._resume_watcher_loop(stop_event)
+
+        state_mock.assert_called_once_with(
+            "resume_detected",
+            {
+                "source": "boottime_monotonic_gap",
+                "suspended_seconds": 3.0,
+            },
+        )
+        recover_mock.assert_called_once_with(stop_event=stop_event)
+
     def test_resume_recovery_cancels_cleanly_during_plugin_unload(self):
         stop_event = mock.Mock()
         stop_event.is_set.return_value = True

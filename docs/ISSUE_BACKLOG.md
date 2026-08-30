@@ -456,7 +456,7 @@ while retaining the narrower readiness timer for diagnosis.
 ### EGB-028 - Recover safely when sleep or resume changes eGPU availability
 
 Status: In progress - startup failback and a debounced resume observer implemented;
-hardware validation pending
+immediate-wake behavior reproduced on hardware 2026-08-30
 
 If the Ally sleeps while Gamescope is bound to the G1, the system may wake after
 the G1 was powered off or unplugged. External-only output and a stale Vulkan
@@ -467,7 +467,10 @@ starts with `-O *,eDP-1`, clears its Mesa device selector, and drops the externa
 mode override. Plugin startup then persists that verified internal failback and
 clears the user-manager selector.
 
-The plugin now watches for a suspend-sized gap between wall and monotonic clocks.
+The plugin now prefers Linux boot-time versus monotonic clocks to detect suspend,
+with wall time as a compatibility fallback. A one-second minimum gap distinguishes
+suspend from ordinary scheduling stalls while still capturing short `s2idle`
+cycles.
 On resume it waits up to twenty seconds for the exact configured vendor/device to
 re-enumerate. If it returns, the external configuration is left untouched. If it
 remains absent, the observer persists internal configuration, clears the user
@@ -475,9 +478,20 @@ Mesa selector, re-enables the Ally panel, restarts Gamescope only when needed,
 and writes a compact durable resume outcome. The shim remains the final startup
 failback if the plugin observer is unavailable.
 
+The first attached-G1 test entered `s2idle` twice but resumed after approximately
+four seconds each time. Both resumes coincided with PCIe AER traffic on the G1's
+Titan Ridge path, xHCI recovery failure at `0000:09:00.0`, and spurious PCIe PME
+interrupts. The Ally USB4 tunnel at `0000:00:03.1` and the G1 xHCI controller at
+`0000:09:00.0` were wake-enabled. This strongly motivates a controlled wake-source
+isolation test but does not yet prove which device initiated the resume. The
+original five-second observer threshold missed these cycles; it is now one second
+and uses the suspend-aware boot-time clock when available.
+
 Remaining acceptance criteria:
 
-- Validate suspend/resume with the G1 remaining attached and powered.
+- Isolate the immediate wake source with temporary, reversible wake-source changes.
+- Revalidate suspend/resume with the G1 remaining attached and powered after the
+  observer threshold fix.
 - Validate waking after the G1 is powered off or removed during sleep.
 - Hardware-validate that slow G1 enumeration is not mistaken for removal.
 - Verify the compact resume record across both attached and absent-device cases.

@@ -47,6 +47,14 @@ class RemoteHarnessTests(unittest.TestCase):
         self.assertNotIn('STAGING="`$PLUGIN_DIR.staging-`$STAMP"', deploy)
         self.assertIn("egpu_identity.json", deploy)
 
+    def test_live_capture_suppresses_repetitive_smu_metrics_flood(self):
+        harness = (Path(__file__).parents[1] / "scripts" / "ally-remote-test.ps1").read_text()
+
+        self.assertIn(
+            "grep --line-buffered -Eiv 'Failed to export SMU metrics table|TransferTableSmu2Dram'",
+            harness,
+        )
+
 
 def status(*, connector="HDMI-A-1", output_order="", gamescope=""):
     return {
@@ -991,10 +999,20 @@ class SafetyGateTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["error_code"], "feature_disabled_for_safety")
 
     async def test_live_unplug_requires_a_fresh_readiness_token(self):
-        result = await main.Plugin.safe_live_unplug({"token": "not-valid"})
+        with mock.patch.object(main, "LIVE_UNPLUG_RELEASE_ENABLED", True):
+            result = await main.Plugin.safe_live_unplug({"token": "not-valid"})
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["error_code"], "readiness_token_invalid")
+
+    async def test_live_unplug_is_quarantined_after_kernel_teardown_hang(self):
+        with mock.patch.object(main, "safe_disconnect_readiness") as readiness_mock:
+            result = await main.Plugin.safe_live_unplug({"token": "unused"})
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["disabled"])
+        self.assertEqual(result["error_code"], "feature_disabled_for_safety")
+        readiness_mock.assert_not_called()
 
     async def test_frontend_replaces_dead_disconnect_control_with_readiness_report(self):
         frontend = (Path(__file__).parents[1] / "src" / "index.tsx").read_text(encoding="utf-8")
@@ -1003,6 +1021,7 @@ class SafetyGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('call(serverApi, "safe_disconnect_readiness", {})', frontend)
         self.assertIn('"Disconnect Check"', frontend)
         self.assertIn('"Read-only check: no hardware was disconnected."', frontend)
+        self.assertIn("Live release is disabled after an AMDGPU teardown hang", frontend)
         self.assertNotIn('onOKActionDescription: "Safe Disconnect eGPU"', frontend)
 
     async def test_frontend_refreshes_main_and_dock_status_without_overlapping(self):
@@ -1231,10 +1250,19 @@ class SafeDisconnectReadinessTests(unittest.TestCase):
         self.assertEqual(topology["audio_pci"], ["0000:08:00.1"])
         self.assertEqual(topology["xhci_pci"], ["0000:09:00.0"])
 
-        result = self._readiness(issue_token=True)
+        with mock.patch.object(main, "LIVE_UNPLUG_RELEASE_ENABLED", True):
+            result = self._readiness(issue_token=True)
         self.assertTrue(result["ready"])
         self.assertTrue(result["token"])
         self.assertEqual(result["blockers"], [])
+
+    def test_disabled_release_keeps_readiness_read_only_and_token_free(self):
+        result = self._readiness(issue_token=True)
+
+        self.assertTrue(result["ready"])
+        self.assertFalse(result["release_enabled"])
+        self.assertIsNone(result["token"])
+        self.assertEqual(result["token_expires_in_seconds"], 0)
 
     def test_any_g1_storage_blocks_live_unplug_even_when_unmounted(self):
         result = self._readiness(block_devices=[{

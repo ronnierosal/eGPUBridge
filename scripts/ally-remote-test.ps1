@@ -298,6 +298,7 @@ echo "LIVE_CAPTURE_START `$(date --iso-8601=seconds) duration_seconds=`$DURATION
 (
   timeout --signal=INT "`$DURATION" journalctl -b -f -n 0 --no-pager -o short-iso 2>&1 |
     grep --line-buffered -Ei 'egpubridge|egpu|gamescope|plugin_loader|amdgpu|drm|hdmi|display|connector|usb4|thunderbolt|pcie|aer|gpu reset|device lost' |
+    grep --line-buffered -Eiv 'Failed to export SMU metrics table|TransferTableSmu2Dram' |
     sed -u 's/^/[journal] /'
 ) &
 JOURNAL_PID=`$!

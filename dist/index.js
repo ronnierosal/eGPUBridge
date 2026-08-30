@@ -802,7 +802,7 @@ function App(props) {
             })) : e("p", { style: { margin: "0 0 8px" } }, "No games, GPU clients, active G1 audio streams, or external storage were detected. The Ally internal display is active."), e("p", { style: { margin: "0", color: "rgba(255,210,90,.95)", fontWeight: "700" } }, canRelease
                 ? "Press Release G1, then wait for the Safe to unplug message before removing the cable."
                 : (res && res.ready
-                    ? "Read-only checks passed. Hardware release remains disabled until this report is validated."
+                    ? "Read-only checks passed. Live release is disabled after an AMDGPU teardown hang; shut down the Ally before unplugging."
                     : "Read-only check: no hardware was disconnected.")))), window, { strTitle: "eGPUBridge", bNeverPopOut: true });
         }).catch(function (err) {
             setLast({ ok: false, source: "safe_disconnect_readiness", error: String(err) });

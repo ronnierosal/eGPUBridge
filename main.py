@@ -47,9 +47,11 @@ GAMESCOPE_TARGET = "gamescope-session.target"
 # These controls remain callable by older frontends, so the backend must fail
 # closed as well as hiding them in the current UI.
 UNSAFE_HARDWARE_CONTROLS_ENABLED = False
-# Enabled only behind the exact Ally X/GPD G1 topology, zero-blocker readiness
-# report, one-time token, and immediate full recheck implemented below.
-LIVE_UNPLUG_RELEASE_ENABLED = True
+# Read-only readiness remains available, but live PCI removal is quarantined.
+# Hardware follow-up on 2026-08-30 found pciehp blocked in amdgpu_device_fini_hw
+# for more than ten minutes after an apparently successful release. The Ally
+# later hung at the ROG logo until it was hard-powered off without the G1.
+LIVE_UNPLUG_RELEASE_ENABLED = False
 
 ENV_OVERRIDE = Path("/home/deck/.config/environment.d/99-egpubridge.conf")
 
@@ -1390,7 +1392,7 @@ def safe_live_unplug(
     if not LIVE_UNPLUG_RELEASE_ENABLED:
         return _disabled_feature(
             "safe_live_unplug",
-            "Live unplug release is awaiting read-only hardware validation on this Ally X/GPD G1.",
+            "Live unplug is disabled because AMDGPU teardown can stall on this Ally X/GPD G1. Shut down the Ally before unplugging.",
         )
     authorization = _consume_live_unplug_token(token)
     if not authorization:
@@ -1730,7 +1732,7 @@ def safe_disconnect_readiness(
     ready = not blockers
     token = None
     token_expires_in = 0
-    if ready and issue_token:
+    if ready and issue_token and LIVE_UNPLUG_RELEASE_ENABLED:
         tb_device = thunderbolt.get("device") or {}
         token = _issue_live_unplug_token({
             "gpu_pci": identity["pci"],

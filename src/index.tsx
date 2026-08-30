@@ -1590,7 +1590,7 @@ function App(props) {
               canRelease
                 ? "Press Release G1, then wait for the Safe to unplug message before removing the cable."
                 : (res && res.ready
-                  ? "Read-only checks passed. Hardware release remains disabled until this report is validated."
+                  ? "Read-only checks passed. Live release is disabled after an AMDGPU teardown hang; shut down the Ally before unplugging."
                   : "Read-only check: no hardware was disconnected.")
             )
           )

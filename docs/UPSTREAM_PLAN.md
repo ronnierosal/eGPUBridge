@@ -42,8 +42,9 @@ an integration conflict that is reviewed after both branches are complete.
 - A running Steam game blocks disruptive switching and G1 release.
 - `egpu_identity.json` is created only after a verified G1 transition, contains
   no raw USB4 unique ID, and survives a deployment.
-- Disconnect Check, Release G1, physical unplug, and reconnect pass with the Ally
-  display remaining usable.
+- Disconnect Check remains read-only and token-free. Live PCI/USB4 removal stays
+  disabled until repeated kernel-level teardown evidence proves no blocked
+  `pciehp`/AMDGPU worker remains.
 - Hot-plug status updates without leaving the plugin.
 - TV audio routing and controller navigation are checked.
 - Resume with no configured external GPU remains internal and usable.
@@ -71,7 +72,8 @@ deployment, runtime discovery, and backup/staging isolation.
 ### 4. Ally X and GPD G1 reliability profile
 
 Include the exact G1 topology binding, sleep compatibility warning, resume
-observer, guarded live release, hot-plug events, and hardware evidence. Present
+observer, read-only disconnect readiness, quarantined live release, hot-plug
+events, and hardware evidence. Present
 this as a device-scoped capability rather than a promise for every enclosure.
 
 Each upstream slice should be rebuilt from current upstream `main`, carry only the

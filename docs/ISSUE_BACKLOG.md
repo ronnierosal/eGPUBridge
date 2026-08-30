@@ -112,8 +112,8 @@ Video reference:
 
 ### EGB-003 - Replace both unsafe disconnect implementations
 
-Status: Guarded GPD G1 release implemented and hardware-validated on 2026-08-30;
-legacy unsafe paths remain permanently disabled
+Status: Live release quarantined after a delayed kernel teardown hang on
+2026-08-30; read-only readiness remains available and all mutation paths fail closed
 
 `prepare_for_unplug` restarts SDDM, sleeps eight seconds, and announces readiness
 without proving that the internal panel is active or that the eGPU is idle. The
@@ -150,22 +150,21 @@ Current safe foundation:
   clients, G1 sound nodes, active PCM clients, Steam game scopes, and DRM clients.
 - Any external storage is conservatively blocked in the first release even when
   it is unmounted. Running games and active HDMI-audio streams are also blocked.
-- A 30-second one-time token binds the final operation to the exact GPU, parent
-  bridge, and authorized `Tapex Creek` USB4 identity. Conditions are rechecked
-  before any mutation.
-- The guarded operation locks future Gamescope configuration to the internal GPU,
-  syncs filesystems, removes the exact G1 parent PCI bridge, deauthorizes only the
-  matched USB4 device, and reports safe-to-unplug only after the G1 disappears and
-  the internal display remains active.
-- The token-free Decky-root readiness snapshot was collected and reviewed on the
-  Ally X/GPD G1 with zero blockers, so guarded release is enabled for a controlled
-  first hardware test. The old destructive paths stay disabled permanently.
+- The former guarded operation used a 30-second one-time token and rechecked the
+  exact GPU, parent bridge, and authorized `Tapex Creek` identity before mutation.
+  Token issuance and PCI/USB4 mutation are now disabled.
+- The token-free Decky-root readiness snapshot remains useful for reporting
+  blockers without changing hardware. The old destructive paths stay disabled
+  permanently.
 - The misleading disabled eject control is replaced by a read-only Disconnect
   Check. Both the title-bar icon and Recovery / Safety row show the same visible
   blocker report and explicitly confirm that no hardware was disconnected.
-- The guarded operation passed its first live release, physical unplug, and hot
-  reconnect cycle. The Ally remained usable, the internal display stayed active,
-  and the G1 re-enumerated successfully.
+- The guarded operation appeared to pass its first live release and reconnect,
+  but later logs showed `irq/39-pciehp` blocked inside `amdgpu_device_fini_hw` for
+  more than ten minutes. The next reboot with the G1 attached hung at the ROG
+  logo and required a hard power-off. This delayed failure invalidates the first
+  pass and keeps live release quarantined until the kernel teardown can be proved
+  complete across repeated cycles.
 
 ## P1 - privileged hardware controls
 
@@ -465,8 +464,8 @@ summarize repeated identical events instead of flooding the operator console.
 
 ### EGB-024 - Reconcile powered-off eGPU removal cleanly
 
-Status: Guarded removal and hot-plug reconciliation implemented and
-hardware-validated; uncontrolled power-off kernel cleanup noise remains observable
+Status: Hot-plug observation implemented; live removal quarantined after a
+delayed AMDGPU/PCI hot-plug teardown hang
 
 After Gamescope had returned to `-O *,eDP-1` and eGPU preference was disabled,
 powering off and disconnecting the G1 produced repeated AMDGPU cleanup failures,
@@ -479,13 +478,15 @@ queues or processes remain on the exact eGPU, then observe device removal with a
 bounded timeout. Diagnostics should distinguish expected hot-removal noise from
 a device that remains stuck or disrupts the internal session.
 
-The guarded release now performs that proof and bounded removal verification, and
-its first physical unplug/reconnect cycle passed. Status persistence now emits one
+The guarded release's bounded sysfs-disappearance check was insufficient: later
+logs showed the PCI hot-plug worker blocked in AMDGPU teardown even though the UI
+had reported success. Live removal is disabled while read-only readiness remains
+available. Status persistence now emits one
 structured `device.removed` or `device.arrived` event when the exact PCI identity
 changes instead of inferring hot-plug state from repeated log lines. Unexpected
 AMDGPU/AER cleanup messages remain kernel evidence for support diagnostics; the
-plugin cannot make an uncontrolled power cut clean and continues to direct users
-through Disconnect Check and Release G1.
+plugin cannot make an uncontrolled power cut clean and directs users through the
+read-only Disconnect Check followed by a normal shutdown before cable removal.
 
 ### EGB-025 - Clarify requested render resolution versus physical TV mode
 
@@ -689,7 +690,7 @@ window, and the manual Refresh button was not needed.
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Sixty-eight deterministic backend tests and CI checks are passing locally.
+- Seventy-two deterministic backend tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 

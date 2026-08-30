@@ -146,6 +146,15 @@ AER recovery noise. Reconnecting the G1 enumerated the same topology and complet
 AMDGPU initialization despite PCI BAR allocation warnings and a 256 MiB fallback.
 The G1 was usable and detected again.
 
+Later evidence invalidated the initial live-release pass. The previous-boot
+journal showed `irq/39-pciehp` blocked in `amdgpu_device_fini_hw` and
+`amdgpu_pci_remove` for more than ten minutes. Subsequent G1 power cycles left the
+GPU visible on PCI without an attached driver or DRM card, and a restart with the
+G1 connected hung at the ROG logo until the Ally was hard-powered off and booted
+without the enclosure. A clean post-boot hot-connect then initialized AMDGPU and
+restored card 1 at `16 GT/s x8`. Live PCI/USB4 release is therefore quarantined;
+Disconnect Check remains read-only and users must shut down before unplugging.
+
 That reconnect exposed a frontend freshness gap: the backend status was current,
 but the `Dock / eGPU` summary did not change until the plugin was reopened. EGB-033
 tracks the paired automatic refresh and visible manual refresh control added from

@@ -3635,6 +3635,7 @@ def restart_gamescope_session_target(desired: dict):
     cmd = _gamescope_systemctl_base(context) + ["restart", GAMESCOPE_TARGET]
     before_cmdline = current_gamescope_process()
     before_pids = _gamescope_pids(before_cmdline)
+    restart_started = time.monotonic()
 
     log("RUN CLEAN: " + " ".join(cmd))
     systemctl = {"rc": -1, "out": "", "err": ""}
@@ -3660,6 +3661,9 @@ def restart_gamescope_session_target(desired: dict):
     # A user-manager restart can disconnect its caller or return non-zero while the
     # replacement session is already starting. The live process is authoritative.
     readiness = _wait_for_gamescope_ready(before_pids, desired)
+    total_elapsed_seconds = round(time.monotonic() - restart_started, 3)
+    readiness = dict(readiness)
+    readiness["total_elapsed_seconds"] = total_elapsed_seconds
     return {
         "ok": bool(readiness.get("ok")),
         "rc": systemctl["rc"],
@@ -3668,6 +3672,7 @@ def restart_gamescope_session_target(desired: dict):
         "cmd": cmd,
         "user": context,
         "readiness": readiness,
+        "total_elapsed_seconds": total_elapsed_seconds,
         "systemctl_ok": systemctl["rc"] == 0,
     }
 

@@ -1,0 +1,85 @@
+# ROG Ally X and GPD G1 hardware validation - 2026-08-30
+
+## Scope
+
+This was the first supervised hardware pass of fork version 0.3.1 on a ROG Ally X
+running SteamOS with a GPD G1 (AMD Radeon RX 7600M XT, PCI ID `1002:7480`) and a
+Samsung TV connected to the G1 HDMI output. Codex ran on a separate Windows
+computer and collected redacted evidence over SSH; Codex was not installed on the
+Ally.
+
+Local capture: `test-results/20260830-123448/` (intentionally ignored by Git).
+
+## Result
+
+Primary display switching passed:
+
+- Decky loaded eGPUBridge 0.3.1 without current plugin errors.
+- The plugin detected the G1, selected `card1-HDMI-A-1`, and identified the TV.
+- External transition completed with Gamescope using
+  `-O HDMI-A-1 --prefer-vk-device 1002:7480`.
+- The RX 7600M XT reported a `16 GT/s` x8 PCIe link through sysfs/lspci.
+- The operator observed stable TV output, a reported 60 FPS in Final Fantasy VII
+  Rebirth, and increased G1 fan activity.
+- Internal transition completed with Gamescope using `-O *,eDP-1` and no eGPU
+  preference.
+- The operator confirmed that Gaming Mode returned to the Ally display without a
+  visible issue.
+- After the G1 was powered off and disconnected, the external PCI device was
+  removed and the internal Gamescope session remained running.
+
+Durable transition timestamps measured approximately 6.39 seconds for the
+external transition and 4.98 seconds for the internal transition. The old
+readiness-only timer incorrectly reported 0.017 and 0.015 seconds because it
+started after the blocking systemd restart returned; EGB-027 corrects that
+telemetry for future runs.
+
+## Findings requiring follow-up
+
+The successful user-visible result does not make the full hardware path clean.
+The live journal contained:
+
+- 84 correctable PCIe Bus Error records.
+- 78 `BadDLLP` and 7 `BadTLP` records.
+- 10 non-fatal uncorrectable `ACSViol` records.
+- 10 xHCI recovery failures and 10 parent-device recovery failures.
+- 59 failed AMDGPU SMU metric exports during powered-off removal.
+- 9 `MES failed to respond to msg=REMOVE_QUEUE` cleanup failures.
+- No captured GPU reset or device-lost event.
+
+The PCIe AER events affected the G1 USB4/Thunderbolt topology while output and
+rendering continued. This should first be compared using a reseated cable, a
+known-certified USB4 cable, and the Ally's other USB4 port before considering any
+kernel workaround.
+
+Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
+The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and
+EGB-024 track the safe-unplug and removal-reconciliation work.
+
+The TV initially used a native `3840x2160@60` physical mode while Gamescope's
+requested render resolution was `1920x1080@60`. EGB-025 tracks clearer render
+versus physical-mode reporting.
+
+The remote after-snapshot initially preferred stale legacy state files over the
+active versioned runtime. EGB-026 fixes that diagnostic-only precedence issue.
+
+Decky's websocket router dropped the successful return value from the internal
+switch RPC because restarting Gamescope tore down the calling UI socket first.
+The UI returned and the transition succeeded, but this live evidence confirms the
+remaining asynchronous handoff work in EGB-002.
+
+## Still to validate
+
+- Repeat several external/internal cycles without launching a game during the
+  transition.
+- Compare both Ally USB4 ports and at least one other certified USB4 cable.
+- Verify TV audio routing, controller navigation, HDR, suspend/resume, and Decky
+  recovery after each Game Mode restart.
+- Verify idempotency: requesting the already-active target must skip the restart.
+- Verify running-game protection rather than overriding it during normal use.
+- Exercise timeout and rollback behavior in a controlled failure test.
+- Re-run after EGB-023 through EGB-027 improvements are deployed.
+
+Conclusion: the fork's primary Ally X/GPD G1 switching path passed its first live
+test. It is ready for focused follow-up testing, not yet for a claim of complete
+hardware validation or a broad upstream release.

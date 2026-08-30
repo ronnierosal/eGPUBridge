@@ -11,6 +11,20 @@ from unittest import mock
 import main
 
 
+class RemoteHarnessTests(unittest.TestCase):
+    def test_snapshot_prefers_active_runtime_config_over_legacy_state(self):
+        harness = (Path(__file__).parents[1] / "scripts" / "ally-remote-test.ps1").read_text()
+        snapshot_start = harness.index("function Save-Snapshot")
+        snapshot_end = harness.index("function Invoke-Preflight", snapshot_start)
+        snapshot = harness[snapshot_start:snapshot_end]
+
+        runtime_check = 'if test -r "`$PLUGIN_DIR/`$file"; then'
+        state_fallback = 'elif test -r "`$STATE_DIR/`$file"; then'
+        self.assertIn(runtime_check, snapshot)
+        self.assertIn(state_fallback, snapshot)
+        self.assertLess(snapshot.index(runtime_check), snapshot.index(state_fallback))
+
+
 def status(*, connector="HDMI-A-1", output_order="", gamescope=""):
     return {
         "egpu": {"card": "card1"},
@@ -325,6 +339,11 @@ class GamescopeRestartTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertFalse(result["systemctl_ok"])
         self.assertIn("timed out", result["err"])
+        self.assertIn("total_elapsed_seconds", result)
+        self.assertEqual(
+            result["readiness"]["total_elapsed_seconds"],
+            result["total_elapsed_seconds"],
+        )
 
 
 class GamescopeIntegrationTests(unittest.TestCase):

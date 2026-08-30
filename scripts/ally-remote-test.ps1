@@ -215,12 +215,12 @@ echo '===== PLUGIN STATE ====='
 test -d "`$STATE_DIR" && ls -ld "`$STATE_DIR" || echo 'plugin state directory missing'
 for file in output_order.conf prefer_vk_device.conf gamescope_mode.conf display_transition.json; do
     echo "--- `$file ---"
-    if test -r "`$STATE_DIR/`$file"; then
-        echo "source=`$STATE_DIR/`$file"
-        cat "`$STATE_DIR/`$file"
-    elif test -r "`$PLUGIN_DIR/`$file"; then
+    if test -r "`$PLUGIN_DIR/`$file"; then
         echo "source=`$PLUGIN_DIR/`$file"
         cat "`$PLUGIN_DIR/`$file"
+    elif test -r "`$STATE_DIR/`$file"; then
+        echo "source=`$STATE_DIR/`$file"
+        cat "`$STATE_DIR/`$file"
     else
         echo 'missing'
     fi

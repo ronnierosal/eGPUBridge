@@ -18,7 +18,7 @@ Priority meanings:
 
 ### EGB-001 - Verify the Gamescope integration is actually active
 
-Status: Implemented in `codex/safe-switching-foundation`; hardware validation pending
+Status: Implemented; initial ROG Ally X/GPD G1 hardware validation passed 2026-08-30
 
 The backend now installs a user-systemd environment drop-in that places the small
 `bin/gamescope` argument shim ahead of the stock executable. It refuses to switch
@@ -39,7 +39,8 @@ Acceptance criteria:
 
 ### EGB-002 - Make the Game Mode reload transactional and event-driven
 
-Status: Partially implemented; hardware validation and asynchronous RPC handoff pending
+Status: Partially implemented; external/internal round trip passed hardware validation,
+asynchronous RPC handoff remains pending
 
 The demo video shows that selecting the external screen restarts the Game Mode
 session. This is not a device reboot: the plugin calls
@@ -53,6 +54,12 @@ The remaining work is to acknowledge and schedule the restart without keeping
 the Decky RPC open while its own UI is torn down, validate the returning Decky UI
 on hardware, and add automatic internal-state rollback when a transition cannot
 be reconciled after startup.
+
+The 2026-08-30 hardware pass confirmed this remaining RPC issue: the switch
+completed and the returning UI worked, but Decky's websocket router logged that
+it dropped the successful RPC result because the restart had already disconnected
+the calling socket. The user-visible transition is functional; asynchronous
+acknowledgement is still needed to make the handoff clean and observable.
 
 Relevant code:
 
@@ -368,6 +375,70 @@ or staging directory names.
 
 Relevant code: [`scripts/ally-remote-test.ps1`](../scripts/ally-remote-test.ps1)
 
+### EGB-023 - Detect and summarize unstable USB4/PCIe links
+
+Status: Open - reproduced on ROG Ally X/GPD G1 hardware 2026-08-30
+
+The first live hardware pass completed successfully, but the kernel repeatedly
+reported PCIe AER errors on the G1's USB4/Thunderbolt path. These included
+correctable `BadDLLP` and `BadTLP` events on `0000:05:01.0`, plus non-fatal
+uncorrectable `ACSViol` events on `0000:05:02.0`. The attached xHCI device at
+`0000:09:00.0` reported that it could not recover. Gamescope remained usable and
+the RX 7600M XT rendered a game at a reported steady 60 FPS, so this is a link
+health warning rather than a reproduced display-switch failure.
+
+Before changing kernel settings, repeat the test with the cable reseated, a
+known-certified USB4 cable, and the other Ally USB4 port. Diagnostics should
+count AER events by severity, BDF, and error type; identify the affected parent
+topology; and warn when the rate exceeds a small threshold. Live capture should
+summarize repeated identical events instead of flooding the operator console.
+
+### EGB-024 - Reconcile powered-off eGPU removal cleanly
+
+Status: Open - reproduced after a successful internal-display restore 2026-08-30
+
+After Gamescope had returned to `-O *,eDP-1` and eGPU preference was disabled,
+powering off and disconnecting the G1 produced repeated AMDGPU cleanup failures,
+including failed SMU metric reads, `MES failed to respond to msg=REMOVE_QUEUE`,
+and `failed to halt cp gfx`. The kernel removed the G1 PCI device after roughly
+28 seconds and the internal Gamescope session remained running.
+
+This reinforces EGB-003: a future safe-unplug workflow must prove that no render
+queues or processes remain on the exact eGPU, then observe device removal with a
+bounded timeout. Diagnostics should distinguish expected hot-removal noise from
+a device that remains stuck or disrupts the internal session.
+
+### EGB-025 - Clarify requested render resolution versus physical TV mode
+
+Status: Open - observed on ROG Ally X/GPD G1 hardware 2026-08-30
+
+The external transition initially selected the Samsung TV's native
+`3840x2160@60` physical mode while Gamescope/Xwayland later reported the requested
+`1920x1080@60` render resolution. The UI and diagnostics should label render and
+physical output resolutions separately, and should verify which one a mode
+selection is intended to control.
+
+### EGB-026 - Prefer active runtime configuration in remote snapshots
+
+Status: Implemented after hardware capture 2026-08-30
+
+The first after-test snapshot reported stale `HDMI-A-2` and `1002:7480` values
+from the legacy state directory even though the active versioned runtime and live
+Gamescope process had returned to `*,eDP-1`. Snapshot collection now reads the
+active runtime first and uses legacy state only when the runtime file is absent.
+A regression test locks that precedence.
+
+### EGB-027 - Report total Game Mode restart time
+
+Status: Implemented after hardware capture 2026-08-30; hardware revalidation pending
+
+The transition record reported readiness polling times of 0.017 seconds external
+and 0.015 seconds internal, while the durable transition timestamps show the full
+operations took about 6.39 and 4.98 seconds. The timer previously started only
+after the blocking `systemctl restart` returned. Restart results now expose
+`total_elapsed_seconds` covering the systemd call plus readiness verification,
+while retaining the narrower readiness timer for diagnosis.
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.
@@ -387,5 +458,9 @@ Relevant code: [`scripts/ally-remote-test.ps1`](../scripts/ally-remote-test.ps1)
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 
-These changes still require a ROG Ally X plus GPD G1 hardware run before being
-considered verified.
+The primary switching path received its first ROG Ally X plus GPD G1 hardware
+pass on 2026-08-30: the plugin loaded without Decky errors, detected the G1 and
+TV, switched Gamescope to the RX 7600M XT and external HDMI connector, rendered a
+game at a reported steady 60 FPS, and returned to the internal panel. Broader
+hardware verification remains open for repeated cycles, failure recovery, audio,
+controller navigation, cable/port comparisons, and the issues recorded above.

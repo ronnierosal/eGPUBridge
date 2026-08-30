@@ -62,6 +62,7 @@ even if the language-specific model differs:
 
 Status meanings:
 
+- **Available** — implemented and passed an initial target-hardware validation.
 - **Available*** — implemented, but the target Ally X/GPD G1 hardware pass is pending.
 - **Partial** — useful foundation exists but does not meet the shared acceptance criteria.
 - **Planned** — not implemented.
@@ -70,18 +71,18 @@ Status meanings:
 
 | ID | Shared capability | SteamOS/Decky | Windows | Parity decision |
 |---|---|---:|---:|---|
-| EGB-C01 | Display and adapter inventory | Available* | Available* | Show internal/external classification and stable native identifiers. |
-| EGB-C02 | Current display-mode detection | Available* | Available* | Never equate “connected” with “active.” Use **Unknown** when proof is incomplete. |
-| EGB-C03 | Manual Internal/External switching | Available* | Available* | Preflight, confirm, apply, verify, and preserve a recovery path. |
+| EGB-C01 | Display and adapter inventory | Available | Available* | Show internal/external classification and stable native identifiers. |
+| EGB-C02 | Current display-mode detection | Available | Available* | Never equate “connected” with “active.” Use **Unknown** when proof is incomplete. |
+| EGB-C03 | Manual Internal/External switching | Available | Available* | Preflight, confirm, apply, verify, and preserve a recovery path. |
 | EGB-C04 | Extend and Duplicate modes | Planned | Available* | Expose only where the platform supports a verified implementation. |
 | EGB-C05 | Idempotent switching | Available* | Planned | Skip an operation when the requested exact state is already live. |
 | EGB-C06 | Running-game guard | Available* | Planned | Block disruptive switching unless the user explicitly confirms. |
 | EGB-C07 | Verified transition and rollback | Partial | Partial | Replace fixed delays with bounded readiness checks and restore the prior state on failure. |
 | EGB-C08 | Exact GPD G1 identity | Planned | Planned | Bind behavior to PCI/device/topology identity, never “first secondary GPU.” |
 | EGB-C09 | Hot-plug arrival/removal events | Partial | Planned | Record device events; do not auto-switch until manual flow is reliable. |
-| EGB-C10 | Structured troubleshooting logs | Available* | Available* | Use the shared event names below and retain platform-native evidence. |
-| EGB-C11 | Redacted support export | Available* | Available* | Redact local user, host, network, and device-serial identifiers by default. |
-| EGB-C12 | Remote supervised testing | Available* | Planned | Permit another computer to capture logs without installing Codex on the handheld. |
+| EGB-C10 | Structured troubleshooting logs | Available | Available* | Use the shared event names below and retain platform-native evidence. |
+| EGB-C11 | Redacted support export | Available | Available* | Redact local user, host, network, and device-serial identifiers by default. |
+| EGB-C12 | Remote supervised testing | Available | Planned | Permit another computer to capture logs without installing Codex on the handheld. |
 | EGB-C13 | Saved per-setup profiles | Planned | Planned | Key profiles to exact adapter plus display identity and verify after applying. |
 | EGB-C14 | Opt-in automatic switching | Partial | Planned | Require a reliable manual flow, explicit enablement, debounce, and rollback first. |
 | EGB-C15 | Safe physical disconnect | Disabled | Disabled | Do not claim safety until displays, GPU users, child devices, storage, and mounts are proven idle. |

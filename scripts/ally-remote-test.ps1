@@ -334,9 +334,24 @@ function Invoke-Deploy {
     }
 
     Write-Host "Running local verification before deployment..."
-    & pnpm --dir $RepositoryRoot build:check
+    $pnpmCommand = Get-Command pnpm -ErrorAction SilentlyContinue
+    if (-not $pnpmCommand) {
+        $codexPnpm = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback\pnpm.cmd"
+        if (Test-Path -LiteralPath $codexPnpm -PathType Leaf) {
+            $pnpmCommand = Get-Item -LiteralPath $codexPnpm
+        }
+    }
+    if (-not $pnpmCommand) {
+        throw "pnpm was not found. Install pnpm or add its directory to PATH before deployment."
+    }
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $pythonCommand) {
+        throw "python was not found. Install Python 3 or add it to PATH before deployment."
+    }
+
+    & $pnpmCommand.Source --dir $RepositoryRoot build:check
     if ($LASTEXITCODE -ne 0) { throw "Frontend build verification failed." }
-    & python -m unittest discover -s (Join-Path $RepositoryRoot "tests") -v
+    & $pythonCommand.Source -m unittest discover -s (Join-Path $RepositoryRoot "tests") -v
     if ($LASTEXITCODE -ne 0) { throw "Backend regression tests failed." }
 
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"

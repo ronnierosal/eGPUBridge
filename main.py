@@ -773,22 +773,33 @@ def gamescope_integration_status(context=None, verify_unit: bool = False) -> dic
     context = dict(context or _gamescope_user_context())
     dropin = _gamescope_dropin_path(context)
     expected = _gamescope_dropin_text()
-    actual = read_text(dropin) if dropin.exists() else ""
-    shim_exists = GAMESCOPE_SHIM.exists()
-    shim_marker = "eGPUBridge Gamescope argument shim" in read_text(GAMESCOPE_SHIM) if shim_exists else False
+    inspection_error = ""
+    actual = ""
+    dropin_exists = False
+    shim_exists = False
+    shim_marker = False
+    try:
+        dropin_exists = dropin.exists()
+        actual = read_text(dropin) if dropin_exists else ""
+        shim_exists = GAMESCOPE_SHIM.exists()
+        shim_marker = "eGPUBridge Gamescope argument shim" in read_text(GAMESCOPE_SHIM) if shim_exists else False
+    except Exception as e:
+        inspection_error = str(e)
     managed_dropin = actual == expected
     result = {
         "ok": bool(shim_exists and shim_marker and managed_dropin),
         "method": "user-systemd-path-shim",
         "unit": GAMESCOPE_UNIT,
         "dropin": str(dropin),
-        "dropin_installed": dropin.exists(),
+        "dropin_installed": dropin_exists,
         "dropin_matches": managed_dropin,
         "shim": str(GAMESCOPE_SHIM),
         "shim_exists": shim_exists,
         "shim_marker": shim_marker,
         "user": context,
     }
+    if inspection_error:
+        result["error"] = f"Could not inspect Gamescope integration: {inspection_error}"
     if verify_unit and result["ok"]:
         unit_result = run(
             _gamescope_systemctl_base(context) + ["show", GAMESCOPE_UNIT, "--property=LoadState", "--value"],

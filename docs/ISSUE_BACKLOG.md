@@ -246,7 +246,7 @@ Relevant code: [`bin/gamescope-session-egpubridge`](../bin/gamescope-session-egp
 
 ### EGB-016 - Expand deterministic tests
 
-Status: In progress - deterministic coverage expanded from 7 to 18 tests
+Status: In progress - deterministic coverage expanded from 7 to 19 tests
 
 Add tests for exact device selection, topology-safe disconnect, transition-state
 recovery, reload idempotency, connector detection failures, tuning bounds,
@@ -311,7 +311,7 @@ Relevant code: [`src/index.tsx`](../src/index.tsx)
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Eighteen deterministic tests and CI checks are passing locally.
+- Nineteen deterministic tests and CI checks are passing locally.
 
 These changes still require a ROG Ally X plus GPD G1 hardware run before being
 considered verified.

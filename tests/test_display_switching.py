@@ -280,6 +280,22 @@ class GamescopeRestartTests(unittest.TestCase):
 
 
 class GamescopeIntegrationTests(unittest.TestCase):
+    def test_status_reports_an_unreadable_user_config_without_raising(self):
+        context = {
+            "username": "restricted",
+            "uid": 1000,
+            "gid": 1000,
+            "home": "/home/restricted",
+            "source": "test",
+        }
+        with mock.patch.object(main, "_gamescope_dropin_path") as path_mock:
+            path_mock.return_value.exists.side_effect = PermissionError("permission denied")
+            result = main.gamescope_integration_status(context)
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["dropin_installed"])
+        self.assertIn("permission denied", result["error"])
+
     def test_install_uses_a_user_dropin_and_never_replaces_the_system_session(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -151,6 +151,10 @@ but the `Dock / eGPU` summary did not change until the plugin was reopened. EGB-
 tracks the paired automatic refresh and visible manual refresh control added from
 this observation.
 
+The EGB-033 deployment subsequently passed its hardware check. With eGPUBridge
+kept open, the reconnected G1 appeared automatically within five seconds. The
+operator did not leave the page or use the new manual Refresh button.
+
 Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
 The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and
 EGB-024 track the safe-unplug and removal-reconciliation work.

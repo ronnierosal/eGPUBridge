@@ -619,7 +619,7 @@ sleep-compatibility warning was also visually confirmed on the attached G1.
 
 ### EGB-033 - Keep hot-plug status current while the plugin remains open
 
-Status: Implemented in the fork, pending hardware verification
+Status: Implemented and hardware-validated on Ally X/GPD G1 2026-08-30
 
 After a successful guarded live unplug and hot reconnect, the backend's main
 status snapshot detected the returned G1, but the visible `Dock / eGPU` summary
@@ -632,6 +632,10 @@ previous hardware probe is still running, and remains gated by Decky's Quick
 Access visibility signal. A visible circular-arrow button in the title bar invokes
 the same refresh path on demand. A frontend regression test locks the paired route
 calls, overlap guard, and explicit control.
+
+The deployed build passed the hot-reconnect check while the operator remained on
+the eGPUBridge page. The G1 appeared automatically within the five-second polling
+window, and the manual Refresh button was not needed.
 
 ## Completed in the fork, pending hardware verification
 

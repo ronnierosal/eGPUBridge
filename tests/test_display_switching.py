@@ -482,6 +482,113 @@ class GamescopeRestartTests(unittest.TestCase):
         )
 
 
+class DisplayTransitionRollbackTests(unittest.TestCase):
+    @staticmethod
+    def _finish(transition, status, details=None):
+        result = dict(transition)
+        result["status"] = status
+        result["details"] = details
+        return result
+
+    def test_failed_external_restart_rolls_back_persisted_state_without_an_extra_restart(self):
+        external = {
+            "target": "external",
+            "connector": "HDMI-A-1",
+            "output_order": "HDMI-A-1",
+            "prefer_vk_device": "1002:7480",
+            "mode": {},
+        }
+        transition = {"id": "external-1", "status": "pending", "target": "external"}
+        failed = {"ok": False, "readiness": {"error": "external display timed out"}}
+        with mock.patch.object(main, "hdmi_panel_on", return_value={"ok": True}), mock.patch.object(
+            main, "restart_gamescope_session_target", return_value=failed
+        ) as restart_mock, mock.patch.object(
+            main, "write_gamescope_wrapper_config", return_value={"ok": True}
+        ) as config_mock, mock.patch.object(
+            main, "write_gamescope_mode_config", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "update_gamescope_user_environment", return_value={"ok": True}
+        ) as environment_mock, mock.patch.object(
+            main, "current_gamescope_process", return_value="88 gamescope -O *,eDP-1 -e"
+        ), mock.patch.object(main, "internal_panel_on", return_value={"ok": True}), mock.patch.object(
+            main, "hdmi_panel_off", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "_finish_display_transition", side_effect=self._finish
+        ), mock.patch.object(main, "log_event"):
+            result = main._apply_restart_sync(external, transition)
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["rollback"]["ok"])
+        self.assertEqual(result["transition"]["status"], "rolled_back")
+        config_mock.assert_called_once_with("*,eDP-1", "disabled")
+        environment_mock.assert_called_once_with(unset=["MESA_VK_DEVICE_SELECT"])
+        restart_mock.assert_called_once_with(external)
+        json.dumps(result)
+
+    def test_external_rollback_restarts_gamescope_when_internal_state_is_not_live(self):
+        transition = {"id": "external-2", "status": "pending", "target": "external"}
+        with mock.patch.object(
+            main, "write_gamescope_wrapper_config", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "write_gamescope_mode_config", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "update_gamescope_user_environment", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "current_gamescope_process", return_value="99 gamescope -O HDMI-A-1 --prefer-vk-device 1002:7480"
+        ), mock.patch.object(main, "internal_panel_on", return_value={"ok": True}), mock.patch.object(
+            main, "hdmi_panel_off", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "restart_gamescope_session_target", return_value={"ok": True, "readiness": {"ready": True}}
+        ) as restart_mock, mock.patch.object(
+            main, "_finish_display_transition", side_effect=self._finish
+        ), mock.patch.object(main, "log_event"):
+            result = main._rollback_external_transition(transition, {"error": "timeout"})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["transition"]["status"], "rolled_back")
+        restart_mock.assert_called_once_with(main._internal_display_desired())
+
+    def test_external_rollback_fails_closed_when_environment_cannot_be_cleared(self):
+        transition = {"id": "external-3", "status": "pending", "target": "external"}
+        with mock.patch.object(
+            main, "write_gamescope_wrapper_config", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "write_gamescope_mode_config", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "update_gamescope_user_environment", return_value={"ok": False, "error": "no user bus"}
+        ), mock.patch.object(main, "current_gamescope_process", return_value=""), mock.patch.object(
+            main, "internal_panel_on", return_value={"ok": True}
+        ), mock.patch.object(main, "restart_gamescope_session_target") as restart_mock, mock.patch.object(
+            main, "_finish_display_transition", side_effect=self._finish
+        ), mock.patch.object(main, "log_event"):
+            result = main._rollback_external_transition(transition, {"error": "timeout"})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["transition"]["status"], "rollback_failed")
+        restart_mock.assert_not_called()
+
+    def test_stale_external_transition_is_reconciled_through_rollback(self):
+        transition = {
+            "id": "external-4",
+            "status": "pending",
+            "target": "external",
+            "desired": {"target": "external", "connector": "HDMI-A-1"},
+            "created_at": 100.0,
+        }
+        rolled_back = dict(transition, status="rolled_back")
+        with mock.patch.object(main, "_read_display_transition", return_value=transition), mock.patch.object(
+            main, "_gamescope_matches_desired", return_value=False
+        ), mock.patch.object(main.time, "time", return_value=150.0), mock.patch.object(
+            main,
+            "_rollback_external_transition",
+            return_value={"ok": True, "transition": rolled_back},
+        ) as rollback_mock:
+            result = main.reconcile_display_transition("88 gamescope -O *,eDP-1")
+
+        self.assertEqual(result["status"], "rolled_back")
+        rollback_mock.assert_called_once()
+
+
 class MissingEgpuRecoveryTests(unittest.TestCase):
     def test_internal_shim_failback_replaces_stale_external_configuration(self):
         status_payload = {

@@ -39,8 +39,8 @@ Acceptance criteria:
 
 ### EGB-002 - Make the Game Mode reload transactional and event-driven
 
-Status: Partially implemented; asynchronous Decky RPC handoff and the native
-pre-switch confirmation passed external/internal hardware validation
+Status: Transactional handoff and automatic internal rollback implemented;
+rollback hardware validation pending
 
 The demo video shows that selecting the external screen restarts the Game Mode
 session. This is not a device reboot: the plugin calls
@@ -50,14 +50,23 @@ when changing Gamescope startup arguments such as `-O` and
 when a Steam game is running, records a durable transition, and replaces the
 fixed six-second sleep with bounded new-PID and exact-argument verification.
 
-The native handoff now writes the transition, returns an accepted operation ID,
-requests a Decky notification, and schedules the restart in the backend after the
-RPC response. The frontend stops polling while Quick Access is closed and reads
-the durable transition through normal status refresh after remount. Remaining
-work is to add automatic internal-state rollback when a transition cannot be
-reconciled after startup. TV-off automation is deliberately skipped during the immediate
-handoff so it cannot delay the RPC; a post-transition automation job remains a
-follow-up for users who enable that optional setting.
+The native handoff now shows a Decky confirmation, writes the transition, returns
+an accepted operation ID, and schedules the restart in the backend after the RPC
+response. The frontend stops polling while Quick Access is closed and reads
+the durable transition through normal status refresh after remount. A failed or
+stale external transition now restores the internal wrapper configuration, clears
+the Mesa eGPU selector, enables the Ally panel, restarts Gamescope only when the
+internal state is not already live, and records `rolled_back` only after the safe
+state is verified. A failure to clear every prerequisite is retained as
+`rollback_failed` rather than claiming recovery. TV-off automation is deliberately
+skipped during the immediate handoff so it cannot delay the RPC; a post-transition
+automation job remains a follow-up for users who enable that optional setting.
+
+The transition path now emits compact structured events for requested, verified,
+failed, rollback-started, and rollback-completed states. Four regression tests
+cover the already-internal, restart-required, fail-closed, and stale-transition
+reconciliation paths. A controlled hardware failure test is still required before
+the rollback path can be marked hardware-validated.
 
 The 2026-08-30 hardware pass confirmed the original RPC issue: the switch
 completed and the returning UI worked, but Decky's websocket router logged that

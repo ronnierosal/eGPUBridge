@@ -276,6 +276,16 @@ def log(msg: str):
     except Exception:
         pass
 
+
+def log_event(event_name: str, **fields):
+    """Write a compact machine-readable reliability event to the plugin log."""
+    payload = {
+        "event": str(event_name or "unknown"),
+        "timestamp": round(time.time(), 3),
+    }
+    payload.update(fields)
+    log("EVENT " + json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+
 def _compact_log_text(text: str, limit: int = 900) -> str:
     """
     v0.7.11:
@@ -4476,6 +4486,11 @@ def _write_display_transition(target: str, desired: dict) -> dict:
     }
     atomic_write(TRANSITION_PATH, json.dumps(transition, indent=2, ensure_ascii=False) + "\n")
     log("DISPLAY_TRANSITION " + json.dumps(transition, ensure_ascii=False))
+    log_event(
+        "display.transition.requested",
+        transition_id=transition["id"],
+        target=target,
+    )
     return transition
 
 
@@ -4490,6 +4505,18 @@ def _finish_display_transition(transition: dict, status: str, details=None) -> d
     except Exception as e:
         result["write_error"] = str(e)
     log("DISPLAY_TRANSITION " + json.dumps(result, ensure_ascii=False))
+    event_name = {
+        "completed": "display.transition.verified",
+        "failed": "display.transition.failed",
+        "rolled_back": "display.transition.rollback.completed",
+        "rollback_failed": "display.transition.failed",
+    }.get(str(status), "display.transition.applied")
+    log_event(
+        event_name,
+        transition_id=str(result.get("id") or ""),
+        target=str(result.get("target") or ""),
+        status=str(status),
+    )
     return result
 
 
@@ -4502,10 +4529,21 @@ def reconcile_display_transition(gs_cmdline=None) -> dict:
         return _finish_display_transition(transition, "completed", {"gamescope": gamescope[-2000:]})
     age = max(0.0, time.time() - float(transition.get("created_at") or time.time()))
     if age >= 45:
+        failure = {
+            "error": "Gamescope did not reach the requested display state",
+            "age_seconds": round(age, 2),
+        }
+        if str(transition.get("target") or "") == "external":
+            rollback = _rollback_external_transition(transition, failure, gamescope)
+            return rollback.get("transition") or transition
+        try:
+            internal_panel_on()
+        except Exception as e:
+            failure["internal_panel_recovery_error"] = str(e)
         return _finish_display_transition(
             transition,
             "failed",
-            {"error": "Gamescope did not reach the requested display state", "age_seconds": round(age, 2)},
+            failure,
         )
     return transition
 
@@ -4662,6 +4700,81 @@ def _decky_str(args, kwargs, key, default):
     return str(value)
 
 
+def _internal_display_desired() -> dict:
+    return {
+        "target": "internal",
+        "output_order": "*,eDP-1",
+        "connector": "eDP-1",
+        "prefer_vk_device": "disabled",
+        "mode": {},
+    }
+
+
+def _rollback_external_transition(transition: dict, failure_details=None, gamescope=None) -> dict:
+    """Restore and verify the safe internal state after a failed external handoff."""
+    transition_id = str((transition or {}).get("id") or "")
+    log_event(
+        "display.transition.rollback.started",
+        transition_id=transition_id,
+        target="internal",
+    )
+    desired = _internal_display_desired()
+    rollback = {
+        "ok": False,
+        "action": "rollback_external_transition",
+        "desired": desired,
+        "configuration": write_gamescope_wrapper_config("*,eDP-1", "disabled"),
+        "mode": write_gamescope_mode_config(disabled=True),
+        "user_environment": update_gamescope_user_environment(
+            unset=["MESA_VK_DEVICE_SELECT"]
+        ),
+    }
+    try:
+        rollback["internal_panel_on"] = internal_panel_on()
+    except Exception as e:
+        rollback["internal_panel_on"] = {"ok": False, "error": str(e)}
+
+    prerequisites_ok = all(
+        bool((rollback.get(key) or {}).get("ok"))
+        for key in ("configuration", "mode", "user_environment")
+    )
+    live_gamescope = current_gamescope_process() if gamescope is None else str(gamescope or "")
+    if not prerequisites_ok:
+        restart = {
+            "ok": False,
+            "restart_skipped": True,
+            "error": "Internal rollback configuration could not be written safely",
+        }
+    elif _gamescope_matches_desired(live_gamescope, desired):
+        restart = {
+            "ok": True,
+            "restart_skipped": True,
+            "restart_reason": "Gamescope is already using the internal display",
+            "gamescope": live_gamescope[-2000:],
+        }
+    else:
+        restart = restart_gamescope_session_target(desired)
+    rollback["restart_gamescope_session"] = restart
+
+    if restart.get("ok"):
+        try:
+            rollback["external_panel_off"] = hdmi_panel_off()
+        except Exception as e:
+            rollback["external_panel_off"] = {"ok": False, "error": str(e)}
+
+    rollback["ok"] = bool(prerequisites_ok and restart.get("ok"))
+    details = {
+        "failure": dict(failure_details or {}),
+        "rollback": dict(rollback),
+    }
+    rollback["transition"] = _finish_display_transition(
+        transition,
+        "rolled_back" if rollback["ok"] else "rollback_failed",
+        details,
+    )
+    return rollback
+
+
 
 def _apply_restart_sync(desired: dict, transition: dict):
     """Restart Game Mode and turn off the internal panel only after verification."""
@@ -4682,11 +4795,11 @@ def _apply_restart_sync(desired: dict, transition: dict):
             log(f"internal_panel_off EXCEPTION: {e}")
         restart["transition"] = _finish_display_transition(transition, "completed", restart.get("readiness"))
     else:
-        try:
-            internal_panel_on()
-        except Exception as e:
-            restart["internal_panel_recovery_error"] = str(e)
-        restart["transition"] = _finish_display_transition(transition, "failed", restart.get("readiness"))
+        restart["rollback"] = _rollback_external_transition(
+            transition,
+            restart.get("readiness") or {"error": restart.get("err") or "External transition failed"},
+        )
+        restart["transition"] = restart["rollback"].get("transition")
     return restart
 
 
@@ -4733,11 +4846,15 @@ def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: 
             worker(desired, transition)
         except Exception as e:
             log(f"DISPLAY_TRANSITION scheduled failure id={transition_id}: {e}")
-            _finish_display_transition(
-                transition,
-                "failed",
-                {"error": f"Scheduled Game Mode restart failed: {e}"},
-            )
+            failure = {"error": f"Scheduled Game Mode restart failed: {e}"}
+            if str((transition or {}).get("target") or "") == "external":
+                _rollback_external_transition(transition, failure)
+            else:
+                try:
+                    internal_panel_on()
+                except Exception as panel_error:
+                    failure["internal_panel_recovery_error"] = str(panel_error)
+                _finish_display_transition(transition, "failed", failure)
         finally:
             with _display_restart_jobs_lock:
                 _display_restart_jobs.pop(transition_id, None)
@@ -4842,13 +4959,7 @@ def _recover_after_resume(
                 break
             time.sleep(max(0.05, float(poll_interval_s)))
 
-        desired = {
-            "target": "internal",
-            "output_order": "*,eDP-1",
-            "connector": "eDP-1",
-            "prefer_vk_device": "disabled",
-            "mode": {},
-        }
+        desired = _internal_display_desired()
         configuration = write_gamescope_wrapper_config("*,eDP-1", "disabled")
         mode = write_gamescope_mode_config(disabled=True)
         environment = update_gamescope_user_environment(unset=["MESA_VK_DEVICE_SELECT"])
@@ -5537,13 +5648,7 @@ class Plugin:
             async_handoff = False
         restart_requested = bool(restart)
 
-        desired = {
-            "target": "internal",
-            "output_order": "*,eDP-1",
-            "connector": "eDP-1",
-            "prefer_vk_device": "disabled",
-            "mode": {},
-        }
+        desired = _internal_display_desired()
 
         status_before = build_status(heavy=False) if restart_requested else {}
         restart_needed = bool(

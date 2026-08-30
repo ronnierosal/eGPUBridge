@@ -4,10 +4,12 @@
 import * as React from "react";
 import {
   ButtonItem,
+  ConfirmModal,
   DialogButton,
   Focusable,
   PanelSection,
   PanelSectionRow,
+  showModal,
 } from "@decky/ui";
 import { definePlugin, toaster, useQuickAccessVisible } from "@decky/api";
 import { callBackend } from "./backend";
@@ -1488,6 +1490,40 @@ function App(props) {
     });
   }
 
+  function confirmExternalDisplayHandoff(method, args) {
+    var modalHandle = null;
+    function closeConfirmation() {
+      if (modalHandle && typeof modalHandle.Close === "function") modalHandle.Close();
+    }
+
+    modalHandle = showModal(
+      React.createElement(
+        ConfirmModal,
+        {
+          strTitle: "Switch to the GPD G1 and TV?",
+          strOKButtonText: "Switch display",
+          strCancelButtonText: "Cancel",
+          bDisableBackgroundDismiss: true,
+          onCancel: closeConfirmation,
+          onOK: function() {
+            closeConfirmation();
+            doCall(method, Object.assign({}, args || {}, { async_handoff: true }));
+          },
+        },
+        e("div", { style: { fontSize: "14px", lineHeight: "20px" } },
+          e("p", { style: { margin: "0 0 10px" } },
+            "Before continuing, set the TV to the HDMI input connected to the GPD G1."
+          ),
+          e("p", { style: { margin: "0" } },
+            "The Ally screen will go dark while Game Mode restarts. After confirmation, the restart waits briefly so the Decky notice can appear."
+          )
+        )
+      ),
+      window,
+      { strTitle: "eGPUBridge", bNeverPopOut: true }
+    );
+  }
+
 
 
     // GPU_TUNING_LOAD
@@ -1977,6 +2013,8 @@ function App(props) {
     if (driver === "i915") return "Intel";
     return driver;
   }
+  var dockGpuText = egpu ? (shortGpuName(gpuLabel) || "External GPU") +
+    (status && status.mesa_version ? " · Mesa " + status.mesa_version : "") : "no eGPU";
   var displayLabel = status && status.display_label ? status.display_label : (connector ? (connector.name || "").replace(/^HDMI-A-/i, "HDMI ").replace(/^DP-/i, "DP ").replace(/^eDP-/i, "eDP ") : "Internal display");
   var bannerMode = status && status.display_target ? status.display_target : (egpu ? "external" : "internal");
   var availableTvModes = normalizeTvModes(status, connector);
@@ -2078,7 +2116,7 @@ function App(props) {
 
   function applyExternalCurrent() {
     var m = currentMode || selectedMode || { width: 3840, height: 2160, refresh: 60 };
-    doCall("apply_egpu_mode", {
+    confirmExternalDisplayHandoff("apply_egpu_mode", {
       restart: true,
       width: m.width,
       height: m.height,
@@ -2347,7 +2385,11 @@ function App(props) {
                 disabled: busy || !egpu,
                 onClick: function() {
                   setLast({ ok: true, marker: "FRONTEND_CLICK_SMART", message: "Diagnostics: SMART frontend click reached React handler" });
-                  doCall("smart_toggle_display", { restart: true, async_handoff: true });
+                  if (externalActive) {
+                    doCall("smart_toggle_display", { restart: true, async_handoff: true });
+                  } else {
+                    confirmExternalDisplayHandoff("smart_toggle_display", { restart: true });
+                  }
                 },
                 style: {
                   width: "100%",
@@ -2451,7 +2493,7 @@ function App(props) {
                   }, "Dock / eGPU"),
                   e("span", {
                     style: { fontSize: "10px", fontWeight: "700", color: "#9AA4B2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "12px", marginTop: "1px" }
-                  }, egpu ? "ASMedia 246x \u00b7 " + (getDriverName(status && status.egpu_driver) || "GPU") + (status && status.mesa_version ? " (MESA" + status.mesa_version + ")" : "") : "no eGPU")
+                  }, dockGpuText)
                 )
               ),
               // Divider
@@ -3878,7 +3920,7 @@ function App(props) {
           onActivate: function() {
             setSelectedMode({ width: 1920, height: 1080, refresh: 60, label: "1920x1080 @ 60Hz" });
             setShowModeList(false);
-            doCall("apply_egpu_mode", { restart: true, async_handoff: true, width: 1920, height: 1080, refresh: 60 });
+            confirmExternalDisplayHandoff("apply_egpu_mode", { restart: true, width: 1920, height: 1080, refresh: 60 });
           }
         },
           e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } },

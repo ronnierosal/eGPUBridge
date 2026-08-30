@@ -10,6 +10,9 @@ Ally.
 
 Local capture: `test-results/20260830-123448/` (intentionally ignored by Git).
 
+Native-handoff follow-up capture: `test-results/20260830-132108/`
+(intentionally ignored by Git).
+
 ## Result
 
 Primary display switching passed:
@@ -33,6 +36,16 @@ external transition and 4.98 seconds for the internal transition. The old
 readiness-only timer incorrectly reported 0.017 and 0.015 seconds because it
 started after the blocking systemd restart returned; EGB-027 corrects that
 telemetry for future runs.
+
+The later native-handoff pass completed another external/internal round trip on
+`card2-HDMI-A-2`. The backend returned accepted transitions before restarting,
+Decky logged no dropped successful RPC result, and the durable records completed
+in approximately 5.38 seconds external and 4.94 seconds internal. The operator did
+not see the requested Decky notification. The TV initially appeared black because
+it was on the wrong input, while the Ally panel had intentionally been disabled;
+selecting the G1 input exposed the already-running external session. EGB-002 and
+EGB-031 track the longer notice window and native TV-input confirmation added from
+this observation.
 
 ## Findings requiring follow-up
 

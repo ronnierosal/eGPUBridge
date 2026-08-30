@@ -39,8 +39,8 @@ Acceptance criteria:
 
 ### EGB-002 - Make the Game Mode reload transactional and event-driven
 
-Status: Partially implemented; external/internal round trip passed hardware validation,
-asynchronous Decky RPC handoff implemented and awaiting hardware validation
+Status: Partially implemented; asynchronous Decky RPC handoff passed an external/internal
+hardware round trip, but the one-second notification window failed visual validation
 
 The demo video shows that selecting the external screen restarts the Game Mode
 session. This is not a device reboot: the plugin calls
@@ -51,20 +51,22 @@ when a Steam game is running, records a durable transition, and replaces the
 fixed six-second sleep with bounded new-PID and exact-argument verification.
 
 The native handoff now writes the transition, returns an accepted operation ID,
-shows a Decky notification, and schedules the restart in the backend after the
+requests a Decky notification, and schedules the restart in the backend after the
 RPC response. The frontend stops polling while Quick Access is closed and reads
 the durable transition through normal status refresh after remount. Remaining
-work is to validate that the websocket result is no longer dropped on hardware
-and add automatic internal-state rollback when a transition cannot be reconciled
-after startup. TV-off automation is deliberately skipped during the immediate
+work is to add automatic internal-state rollback when a transition cannot be
+reconciled after startup. TV-off automation is deliberately skipped during the immediate
 handoff so it cannot delay the RPC; a post-transition automation job remains a
 follow-up for users who enable that optional setting.
 
 The 2026-08-30 hardware pass confirmed the original RPC issue: the switch
 completed and the returning UI worked, but Decky's websocket router logged that
 it dropped the successful RPC result because the restart had already disconnected
-the calling socket. The next hardware pass must prove the new scheduled handoff
-makes this transition clean and observable.
+the calling socket. A later same-day pass proved the scheduled RPC handoff itself:
+both durable transitions completed, no websocket drop/error was logged, and the
+external/internal totals were about 5.38 and 4.94 seconds. The operator did not see
+the notification before restart, so the default deferred restart window is now
+three seconds and the external path first presents a native TV-input confirmation.
 
 Relevant code:
 
@@ -331,7 +333,8 @@ Foundation completed on the feature branch:
 - Decky's native Quick Access visibility hook pauses status polling while the
   panel is closed.
 - Display switches can return a durable accepted transition before a scheduled
-  Gamescope restart, with a native Decky toast explaining the reconnect.
+  Gamescope restart. Hardware proved the clean RPC handoff; a longer notice window
+  and native TV-input confirmation are pending a follow-up visual pass.
 
 Relevant code: [`src/index.tsx`](../src/index.tsx)
 
@@ -515,6 +518,20 @@ backup root, is cleaned on failure, and is atomically moved into the live plugin
 directory only after extraction completes. A harness regression test locks the
 staging location.
 
+### EGB-031 - Identify the GPD G1 clearly and warn before the Ally panel goes dark
+
+Status: Implemented locally; deployment and visual validation pending
+
+The validated UI described the connected device as `ASMedia 246x AMD (MESA25.3)`.
+That mixed the USB4 bridge, driver, and Mesa version while hiding the actual GPU.
+PCI ID `1002:7480` now resolves to `AMD Radeon RX 7600M XT`, and the dashboard uses
+that GPU model instead of a hard-coded bridge label.
+
+The first native-handoff pass also appeared to produce black screens only because
+the Samsung TV was still on another input while the Ally panel had correctly been
+disabled. All external-switch entry points now show a native confirmation telling
+the operator to select the G1's HDMI input before the restart is accepted.
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.
@@ -530,7 +547,7 @@ staging location.
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Twenty-seven deterministic tests and CI checks are passing locally.
+- Thirty-five deterministic tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 

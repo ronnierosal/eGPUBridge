@@ -43,6 +43,18 @@ def status(*, connector="HDMI-A-1", output_order="", gamescope=""):
 
 
 class DisplayTargetTests(unittest.TestCase):
+    def test_gpd_g1_uses_its_actual_gpu_model_name(self):
+        self.assertEqual(
+            main._gpu_pretty_name(
+                {
+                    "vendor": "0x1002",
+                    "device": "0x7480",
+                    "lspci": "Navi 33",
+                }
+            ),
+            "AMD Radeon RX 7600M XT",
+        )
+
     def test_connected_external_display_is_not_assumed_active(self):
         self.assertEqual(main._display_target_label(status()), "internal")
 
@@ -288,6 +300,10 @@ class ApplyModeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NativeHandoffWrapperTests(unittest.IsolatedAsyncioTestCase):
+    def test_deferred_restart_leaves_time_for_the_decky_notice(self):
+        delay = inspect.signature(main._schedule_display_restart).parameters["delay_s"].default
+        self.assertGreaterEqual(delay, 3.0)
+
     async def test_deferred_internal_handoff_does_not_delay_rpc_for_tv_power(self):
         accepted = {"ok": True, "accepted": True, "transition": {"id": "transition-2"}}
         with mock.patch.object(

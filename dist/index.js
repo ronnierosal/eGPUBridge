@@ -735,6 +735,24 @@ function App(props) {
             setBusy(false);
         });
     }
+    function confirmExternalDisplayHandoff(method, args) {
+        var modalHandle = null;
+        function closeConfirmation() {
+            if (modalHandle && typeof modalHandle.Close === "function")
+                modalHandle.Close();
+        }
+        modalHandle = DFL.showModal(SP_REACT.createElement(DFL.ConfirmModal, {
+            strTitle: "Switch to the GPD G1 and TV?",
+            strOKButtonText: "Switch display",
+            strCancelButtonText: "Cancel",
+            bDisableBackgroundDismiss: true,
+            onCancel: closeConfirmation,
+            onOK: function () {
+                closeConfirmation();
+                doCall(method, Object.assign({}, args || {}, { async_handoff: true }));
+            },
+        }, e("div", { style: { fontSize: "14px", lineHeight: "20px" } }, e("p", { style: { margin: "0 0 10px" } }, "Before continuing, set the TV to the HDMI input connected to the GPD G1."), e("p", { style: { margin: "0" } }, "The Ally screen will go dark while Game Mode restarts. After confirmation, the restart waits briefly so the Decky notice can appear."))), window, { strTitle: "eGPUBridge", bNeverPopOut: true });
+    }
     // GPU_TUNING_LOAD
     function loadGpuTuning(force) {
         setGpuTuningLoading(true);
@@ -902,24 +920,15 @@ function App(props) {
             return false;
         return /nvidia|geforce|rtx|gtx/i.test(label);
     }
-    function getDriverName(driver) {
-        if (!driver || driver === "none" || driver === "unknown")
-            return "";
-        if (driver === "amdgpu")
-            return "AMD";
-        if (driver === "nvidia")
-            return "NVIDIA";
-        if (driver === "i915")
-            return "Intel";
-        return driver;
-    }
+    var dockGpuText = egpu ? (shortGpuName(gpuLabel) || "External GPU") +
+        (status && status.mesa_version ? " · Mesa " + status.mesa_version : "") : "no eGPU";
     var displayLabel = status && status.display_label ? status.display_label : (connector ? (connector.name || "").replace(/^HDMI-A-/i, "HDMI ").replace(/^DP-/i, "DP ").replace(/^eDP-/i, "eDP ") : "Internal display");
     var availableTvModes = normalizeTvModes(status, connector);
     var currentMode = status && status.current_mode ? status.current_mode : null;
     var tvSignalMode = status && status.tv_signal_mode ? status.tv_signal_mode : null;
     function applyExternalCurrent() {
         var m = currentMode || selectedMode || { width: 3840, height: 2160, refresh: 60 };
-        doCall("apply_egpu_mode", {
+        confirmExternalDisplayHandoff("apply_egpu_mode", {
             restart: true,
             width: m.width,
             height: m.height,
@@ -1115,7 +1124,12 @@ function App(props) {
         disabled: busy || !egpu,
         onClick: function () {
             setLast({ ok: true, marker: "FRONTEND_CLICK_SMART", message: "Diagnostics: SMART frontend click reached React handler" });
-            doCall("smart_toggle_display", { restart: true, async_handoff: true });
+            if (externalActive) {
+                doCall("smart_toggle_display", { restart: true, async_handoff: true });
+            }
+            else {
+                confirmExternalDisplayHandoff("smart_toggle_display", { restart: true });
+            }
         },
         style: {
             width: "100%",
@@ -1186,7 +1200,7 @@ function App(props) {
         style: { fontSize: "11px", fontWeight: "900", color: "#EEEAFE", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "13px" }
     }, "Dock / eGPU"), e("span", {
         style: { fontSize: "10px", fontWeight: "700", color: "#9AA4B2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "12px", marginTop: "1px" }
-    }, egpu ? "ASMedia 246x \u00b7 " + (getDriverName(status && status.egpu_driver) || "GPU") + (status && status.mesa_version ? " (MESA" + status.mesa_version + ")" : "") : "no eGPU"))),
+    }, dockGpuText))),
     // Divider
     e("div", { style: { height: "1px", background: "rgba(255,255,255,.06)", margin: "0 12px" } }),
     // Sub-row 2: Link / Port / Speed
@@ -1961,7 +1975,7 @@ function App(props) {
         onActivate: function () {
             setSelectedMode({ width: 1920, height: 1080, refresh: 60, label: "1920x1080 @ 60Hz" });
             setShowModeList(false);
-            doCall("apply_egpu_mode", { restart: true, async_handoff: true, width: 1920, height: 1080, refresh: 60 });
+            confirmExternalDisplayHandoff("apply_egpu_mode", { restart: true, width: 1920, height: 1080, refresh: 60 });
         }
     }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Fallback 1080p60"), e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Safe mode"))),
     // Section: Diagnostics

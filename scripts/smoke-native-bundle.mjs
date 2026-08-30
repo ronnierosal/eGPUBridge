@@ -10,10 +10,12 @@ globalThis.SP_REACT = {
 };
 globalThis.DFL = {
   ButtonItem: component,
+  ConfirmModal: component,
   DialogButton: component,
   Focusable: component,
   PanelSection: component,
   PanelSectionRow: component,
+  showModal: () => ({ Close() {}, Update() {} }),
 };
 globalThis.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit = {
   connect() {

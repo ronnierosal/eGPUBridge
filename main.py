@@ -1806,6 +1806,8 @@ def _gpu_pretty_name(card: dict) -> str:
 
     s = lspci.lower()
 
+    if vendor == "0x1002" and device == "0x7480":
+        return "AMD Radeon RX 7600M XT"
     if "navi 48" in s or device == "0x7550":
         return "AMD Radeon RX 9070"
     if "radeon" in lspci or "geforce" in lspci or "arc" in lspci:
@@ -3804,7 +3806,7 @@ _display_restart_jobs = {}
 _display_restart_jobs_lock = threading.Lock()
 
 
-def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: float = 1.0) -> dict:
+def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: float = 3.0) -> dict:
     """Schedule a restart after Decky has had time to return the accepted RPC."""
     transition_id = str((transition or {}).get("id") or "")
     if not transition_id:

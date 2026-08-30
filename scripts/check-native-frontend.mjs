@@ -33,6 +33,12 @@ if (!bundle.includes("__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_d
 if (!bundle.includes("export { index as default }")) {
   failures.push("Generated bundle does not expose the native default plugin export");
 }
+if (!source.includes("confirmExternalDisplayHandoff") || !source.includes("ConfirmModal")) {
+  failures.push("External display switching must retain native TV-input confirmation");
+}
+if (source.includes('"ASMedia 246x \\u00b7 "')) {
+  failures.push("Dock summary still hard-codes the bridge name instead of the detected GPU model");
+}
 
 if (failures.length) {
   for (const failure of failures) console.error(`ERROR: ${failure}`);

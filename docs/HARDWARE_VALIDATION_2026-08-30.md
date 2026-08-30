@@ -112,6 +112,13 @@ Keeping the native dashboard open during these tests also exposed `pacman -Q mes
 running every five seconds. EGB-032 tracks caching this stable package metadata
 without slowing live GPU, link, or display updates.
 
+The cache and compatibility-warning deployment then passed live validation. The
+dashboard visibly showed the amber sleep warning for the detected G1. During more
+than two minutes with the panel open, `last_status.json` kept refreshing while the
+plugin log contained exactly one `pacman -Q mesa` invocation at startup. This
+confirms the five-minute cache removed package-manager polling without freezing
+live dashboard state.
+
 Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
 The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and
 EGB-024 track the safe-unplug and removal-reconciliation work.

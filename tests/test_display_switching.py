@@ -5,6 +5,7 @@ import json
 import re
 import base64
 import zlib
+import os
 from pathlib import Path
 from unittest import mock
 
@@ -736,6 +737,93 @@ class SafetyGateTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["error_code"], "feature_disabled_for_safety")
 
 
+class SafeDisconnectReadinessTests(unittest.TestCase):
+    def _egpu(self, pci="0000:08:00.0", card="card1"):
+        return {
+            "card": card,
+            "path": f"/dev/dri/{card}",
+            "pci": pci,
+            "vendor": "0x1002",
+            "device": "0x7480",
+            "lspci": "VGA compatible controller: AMD RX 7600M XT",
+            "is_egpu": True,
+        }
+
+    def test_ambiguous_external_gpus_fail_closed(self):
+        result = main.safe_disconnect_readiness(
+            cards=[self._egpu(), self._egpu("0000:09:00.0", "card2")],
+            status_obj={},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["ready"])
+        self.assertTrue(result["read_only"])
+        self.assertEqual(result["candidate_count"], 2)
+        self.assertEqual(result["blockers"][0]["code"], "egpu_identity_ambiguous")
+
+    def test_exact_drm_nodes_and_clients_are_reported_without_cmdline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sys_root = root / "sys"
+            dev_root = root / "dev" / "dri"
+            proc_root = root / "proc"
+            pci_device = sys_root / "selected-egpu"
+            drm_root = pci_device / "drm"
+            drm_root.mkdir(parents=True)
+            dev_root.mkdir(parents=True)
+            for name in ("card1", "renderD129", "controlD65"):
+                (drm_root / name).touch()
+                (dev_root / name).touch()
+            (drm_root / "card1-HDMI-A-1").touch()
+
+            process = proc_root / "123"
+            (process / "fd").mkdir(parents=True)
+            (process / "fd" / "4").touch()
+            (process / "comm").write_text("game-bin\n")
+
+            real_readlink = os.readlink
+            def fake_readlink(path):
+                if Path(path) == process / "fd" / "4":
+                    return str(dev_root / "renderD129")
+                return real_readlink(path)
+
+            with mock.patch.object(main.os, "readlink", side_effect=fake_readlink):
+                result = main.safe_disconnect_readiness(
+                    cards=[self._egpu()],
+                    status_obj={"display_target": "internal", "internal_display": {"active": True}},
+                    sys_pci_root=sys_root,
+                    dev_dri_root=dev_root,
+                    proc_root=proc_root,
+                    pci_device_path=pci_device,
+                )
+
+        nodes = result["checks"]["drm_nodes"]["nodes"]
+        clients = result["checks"]["drm_clients"]["clients"]
+        self.assertEqual(len(nodes), 3)
+        self.assertNotIn("card1-HDMI-A-1", " ".join(nodes))
+        self.assertEqual(clients[0]["pid"], 123)
+        self.assertEqual(clients[0]["comm"], "game-bin")
+        self.assertNotIn("cmdline", clients[0])
+        self.assertIn("egpu_in_use", [item["code"] for item in result["blockers"]])
+        self.assertIn("usb4_topology_incomplete", [item["code"] for item in result["blockers"]])
+        self.assertFalse(result["ready"])
+
+    def test_external_display_is_a_blocker_even_with_no_clients(self):
+        with mock.patch.object(
+            main, "_drm_nodes_for_pci", return_value={"ok": True, "complete": True, "nodes": ["/dev/dri/card1"]}
+        ), mock.patch.object(
+            main, "_processes_using_device_nodes", return_value={"ok": True, "complete": True, "clients": []}
+        ):
+            result = main.safe_disconnect_readiness(
+                cards=[self._egpu()],
+                status_obj={"display_target": "external", "internal_display": {"active": False}},
+            )
+
+        codes = [item["code"] for item in result["blockers"]]
+        self.assertIn("internal_display_not_verified", codes)
+        self.assertFalse(result["ready"])
+
+
 class InternalConnectorSafetyTests(unittest.TestCase):
     def test_missing_edp_connector_has_no_guessed_id(self):
         with mock.patch.object(
@@ -756,7 +844,7 @@ class DeckyApiContractTests(unittest.TestCase):
         plugin = main.Plugin()
         registry = (Path(__file__).parents[1] / "src" / "backend.ts").read_text()
         routes = re.findall(r"^  ([a-z][a-z0-9_]+): (noArgs|objectArg)\(", registry, re.MULTILINE)
-        self.assertEqual(len(routes), 34)
+        self.assertEqual(len(routes), 35)
         for route, adapter in routes:
             method = getattr(plugin, route)
             signature = inspect.signature(method)

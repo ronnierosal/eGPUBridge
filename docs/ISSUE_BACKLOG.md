@@ -103,7 +103,7 @@ Video reference:
 
 ### EGB-003 - Replace both unsafe disconnect implementations
 
-Status: Mitigated - both UI and backend controls are disabled until fixed
+Status: In progress - destructive controls remain disabled; read-only readiness reporting is implemented
 
 `prepare_for_unplug` restarts SDDM, sleeps eight seconds, and announces readiness
 without proving that the internal panel is active or that the eGPU is idle. The
@@ -125,6 +125,17 @@ Acceptance criteria:
 - Enumerate child PCI, USB, block, filesystem, and mount dependencies.
 - Abort on mounted storage, active processes, or any display-restore failure.
 - Verify the internal output before allowing physical removal.
+
+Current safe foundation:
+
+- `safe_disconnect_readiness` requires exactly one external DRM GPU with a
+  validated PCI identity.
+- It resolves only the DRM nodes owned by that exact PCI function and reports
+  processes holding those nodes using PID, process name, and UID only.
+- The internal Gamescope target must be active.
+- It deliberately reports `ready: false` until the common USB4 tunnel and all
+  sibling PCI, USB, block, filesystem, and mount dependencies can be proven.
+- The legacy destructive paths remain disabled in both the UI and backend.
 
 ## P1 - privileged hardware controls
 
@@ -502,8 +513,8 @@ Remaining acceptance criteria:
 
 - Determine whether an Ally/G1 firmware, embedded-controller, or power-delivery
   update can prevent the ACPI wake while the G1 remains attached.
-- Visually validate the new attached-G1 sleep compatibility warning. It is scoped
-  to the hardware-validated Ally X plus RX 7600M XT pair and does not change the
+- Keep the visually validated attached-G1 sleep compatibility warning scoped to
+  the hardware-validated Ally X plus RX 7600M XT pair; it must not change the
   ineffective kernel wake permissions.
 - Only test removing the G1 during sleep after the platform can sustain attached
   sleep; the current immediate ACPI wake prevents that scenario.
@@ -571,7 +582,7 @@ Ally all passed the follow-up hardware test.
 
 ### EGB-032 - Cache stable platform metadata during dashboard polling
 
-Status: Implemented with regression coverage; hardware validation pending
+Status: Implemented and hardware-validated on Ally X/GPD G1 2026-08-30
 
 While the Quick Access panel is visible, its five-second status refresh runs
 `pacman -Q mesa` every time even though the installed Mesa package cannot normally
@@ -584,6 +595,10 @@ repeated status calls do not repeatedly spawn the package manager.
 Mesa package metadata is now cached for five minutes while live GPU, link, sensor,
 and display state retains the normal dashboard refresh cadence. The regression
 suite proves repeated reads use the cache and a later read refreshes after expiry.
+Live validation kept the native panel open while `last_status.json` continued to
+update on the normal cadence. From plugin startup through more than two minutes of
+polling, the log contained exactly one `pacman -Q mesa` invocation. The scoped
+sleep-compatibility warning was also visually confirmed on the attached G1.
 
 ## Completed in the fork, pending hardware verification
 

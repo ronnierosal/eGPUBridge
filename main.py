@@ -674,6 +674,233 @@ def pick_egpu(cards):
     return external[0]
 
 
+def _disconnect_egpu_candidates(cards):
+    """Return only externally classified DRM GPUs with stable PCI identity."""
+    candidates = []
+    for card in cards or []:
+        pci = str(card.get("pci") or "").strip().lower()
+        card_name = str(card.get("card") or "").strip()
+        if not card.get("is_egpu"):
+            continue
+        if not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", pci):
+            continue
+        if not re.fullmatch(r"card[0-9]+", card_name):
+            continue
+        candidates.append(card)
+    return candidates
+
+
+def _drm_nodes_for_pci(
+    pci: str,
+    sys_pci_root=Path("/sys/bus/pci/devices"),
+    dev_dri_root=Path("/dev/dri"),
+    pci_device_path=None,
+) -> dict:
+    """Resolve the exact DRM device nodes owned by one PCI function."""
+    normalized_pci = str(pci or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", normalized_pci):
+        return {"ok": False, "complete": False, "nodes": [], "error": "invalid PCI identity"}
+
+    drm_dir = (Path(pci_device_path) if pci_device_path is not None else Path(sys_pci_root) / normalized_pci) / "drm"
+    try:
+        names = sorted(
+            entry.name
+            for entry in drm_dir.iterdir()
+            if re.fullmatch(r"(?:card[0-9]+|renderD[0-9]+|controlD[0-9]+)", entry.name)
+        )
+    except Exception as e:
+        return {
+            "ok": False,
+            "complete": False,
+            "nodes": [],
+            "pci": normalized_pci,
+            "error": f"could not inspect exact DRM nodes: {e}",
+        }
+
+    nodes = []
+    missing = []
+    for name in names:
+        node = Path(dev_dri_root) / name
+        if node.exists():
+            nodes.append(str(node))
+        else:
+            missing.append(str(node))
+    complete = bool(nodes) and not missing
+    return {
+        "ok": complete,
+        "complete": complete,
+        "pci": normalized_pci,
+        "nodes": nodes,
+        "missing_nodes": missing,
+        "error": "" if complete else "exact DRM node set is incomplete",
+    }
+
+
+def _processes_using_device_nodes(node_paths, proc_root=Path("/proc")) -> dict:
+    """Find processes holding exact DRM nodes without exposing command lines."""
+    expected = {os.path.normpath(str(path)) for path in node_paths or [] if str(path)}
+    clients = {}
+    permission_errors = 0
+    try:
+        processes = list(Path(proc_root).iterdir())
+    except Exception as e:
+        return {
+            "ok": False,
+            "complete": False,
+            "clients": [],
+            "error": f"could not inspect process file descriptors: {e}",
+        }
+
+    for process in processes:
+        if not process.name.isdigit():
+            continue
+        fd_dir = process / "fd"
+        try:
+            descriptors = list(fd_dir.iterdir())
+        except (FileNotFoundError, ProcessLookupError, NotADirectoryError):
+            continue
+        except PermissionError:
+            permission_errors += 1
+            continue
+        except OSError:
+            continue
+
+        used_nodes = set()
+        for descriptor in descriptors:
+            try:
+                target = os.readlink(descriptor)
+            except (FileNotFoundError, ProcessLookupError, OSError):
+                continue
+            normalized = os.path.normpath(str(target).removesuffix(" (deleted)"))
+            if normalized in expected:
+                used_nodes.add(normalized)
+        if not used_nodes:
+            continue
+
+        comm = read_text(process / "comm").strip() or "unknown"
+        try:
+            uid = process.stat().st_uid
+        except Exception:
+            uid = None
+        clients[process.name] = {
+            "pid": int(process.name),
+            "comm": comm[:128],
+            "uid": uid,
+            "nodes": sorted(used_nodes),
+        }
+
+    complete = permission_errors == 0
+    return {
+        "ok": complete,
+        "complete": complete,
+        "clients": [clients[key] for key in sorted(clients, key=int)],
+        "permission_errors": permission_errors,
+        "error": "" if complete else "one or more process descriptor tables were not readable",
+    }
+
+
+def safe_disconnect_readiness(
+    cards=None,
+    status_obj=None,
+    sys_pci_root=Path("/sys/bus/pci/devices"),
+    dev_dri_root=Path("/dev/dri"),
+    proc_root=Path("/proc"),
+    pci_device_path=None,
+) -> dict:
+    """Build a read-only, fail-closed report. This function never detaches hardware."""
+    inspected_cards = scan_cards() if cards is None else list(cards)
+    candidates = _disconnect_egpu_candidates(inspected_cards)
+    blockers = []
+    identity = None
+
+    if len(candidates) != 1:
+        blockers.append({
+            "code": "egpu_identity_ambiguous" if candidates else "egpu_not_found",
+            "message": (
+                f"Expected exactly one external GPU, found {len(candidates)}."
+                if candidates
+                else "No external GPU with an exact PCI identity was found."
+            ),
+        })
+        return {
+            "ok": True,
+            "action": "safe_disconnect_readiness",
+            "ready": False,
+            "read_only": True,
+            "identity": identity,
+            "candidate_count": len(candidates),
+            "checks": {},
+            "blockers": blockers,
+        }
+
+    egpu = candidates[0]
+    identity = {
+        "card": str(egpu.get("card") or ""),
+        "pci": str(egpu.get("pci") or "").lower(),
+        "vendor": str(egpu.get("vendor") or "").lower(),
+        "device": str(egpu.get("device") or "").lower(),
+        "description": str(egpu.get("lspci") or "")[:300],
+    }
+    drm_nodes = _drm_nodes_for_pci(identity["pci"], sys_pci_root, dev_dri_root, pci_device_path)
+    clients = _processes_using_device_nodes(drm_nodes.get("nodes"), proc_root) if drm_nodes.get("complete") else {
+        "ok": False,
+        "complete": False,
+        "clients": [],
+        "error": "DRM client scan skipped because exact device nodes are incomplete",
+    }
+
+    status = build_status() if status_obj is None else dict(status_obj)
+    internal = status.get("internal_display") or {}
+    display_target = str(status.get("display_target") or "unknown")
+    display_ok = display_target == "internal" and bool(internal.get("active"))
+    display_check = {
+        "ok": display_ok,
+        "target": display_target,
+        "internal_active": bool(internal.get("active")),
+    }
+
+    if not drm_nodes.get("complete"):
+        blockers.append({"code": "drm_nodes_incomplete", "message": drm_nodes.get("error")})
+    if not clients.get("complete"):
+        blockers.append({"code": "drm_client_scan_incomplete", "message": clients.get("error")})
+    if clients.get("clients"):
+        blockers.append({
+            "code": "egpu_in_use",
+            "message": f"{len(clients['clients'])} process(es) still have the eGPU open.",
+        })
+    if not display_ok:
+        blockers.append({
+            "code": "internal_display_not_verified",
+            "message": "The internal display is not the verified active Gamescope target.",
+        })
+
+    # The GPD G1 exposes sibling PCI/USB functions outside the GPU function's
+    # own sysfs subtree. Until their common tunnel root is proven, storage and
+    # mount enumeration is intentionally incomplete and readiness must fail.
+    topology = {
+        "ok": False,
+        "complete": False,
+        "message": "Exact USB4 child PCI, USB, block, filesystem, and mount topology is not yet proven.",
+    }
+    blockers.append({"code": "usb4_topology_incomplete", "message": topology["message"]})
+
+    return {
+        "ok": True,
+        "action": "safe_disconnect_readiness",
+        "ready": False,
+        "read_only": True,
+        "identity": identity,
+        "candidate_count": 1,
+        "checks": {
+            "display": display_check,
+            "drm_nodes": drm_nodes,
+            "drm_clients": clients,
+            "usb4_storage_topology": topology,
+        },
+        "blockers": blockers,
+    }
+
+
 def pick_connector(card):
     if not card:
         return None
@@ -4800,6 +5027,11 @@ class Plugin:
                 "Safe Disconnect is disabled until the selected eGPU, USB4 tunnel, and mounted storage can be verified.",
             )
         return safe_disconnect_egpu()
+
+    @staticmethod
+    async def safe_disconnect_readiness(*args, **kwargs):
+        log("UI_CALL safe_disconnect_readiness")
+        return safe_disconnect_readiness()
 
     @staticmethod
     async def safe_reconnect(*args, **kwargs):  # orphaned: not called from frontend

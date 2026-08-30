@@ -57,6 +57,7 @@ const backendRpc = {
     recent_events: (args = {}) => recentEventsCall(Number(args.minutes ?? 10)),
     restore_internal_mode: objectArg("restore_internal_mode"),
     safe_disconnect: noArgs("safe_disconnect"),
+    safe_disconnect_readiness: noArgs("safe_disconnect_readiness"),
     save_tv_ip: objectArg("save_tv_ip"),
     set_hotkey_settings: objectArg("set_hotkey_settings"),
     set_tv_automation_settings: objectArg("set_tv_automation_settings"),

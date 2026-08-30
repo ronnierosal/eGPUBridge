@@ -4,6 +4,7 @@ import json
 import time
 import signal
 import secrets
+import hashlib
 import shutil
 import subprocess
 import select
@@ -39,6 +40,7 @@ GAMESCOPE_SHIM = PLUGIN_DIR / "bin" / "gamescope"
 TRANSITION_PATH = PLUGIN_DIR / "display_transition.json"
 RESUME_STATE_PATH = PLUGIN_DIR / "sleep_resume.json"
 DISCONNECT_READINESS_PATH = PLUGIN_DIR / "disconnect_readiness.json"
+EGPU_IDENTITY_PATH = PLUGIN_DIR / "egpu_identity.json"
 GAMESCOPE_UNIT = "gamescope-session.service"
 GAMESCOPE_TARGET = "gamescope-session.target"
 
@@ -989,6 +991,244 @@ def _gpd_g1_thunderbolt_device(thunderbolt_root=Path("/sys/bus/thunderbolt/devic
     }
 
 
+def _read_egpu_identity(identity_path=None) -> dict:
+    path = Path(identity_path) if identity_path is not None else EGPU_IDENTITY_PATH
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def _identity_sha256(value) -> str:
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+
+
+def _public_thunderbolt_status(report: dict) -> dict:
+    """Remove raw USB4 unique IDs while retaining stable equality evidence."""
+    public = dict(report or {})
+
+    def sanitize(item):
+        value = dict(item or {})
+        unique_id = value.pop("unique_id", "")
+        if unique_id:
+            value["unique_id_sha256"] = _identity_sha256(unique_id)
+        return value
+
+    public["device"] = sanitize(public.get("device")) if public.get("device") else None
+    public["authorized_devices"] = [sanitize(item) for item in public.get("authorized_devices") or []]
+    return public
+
+
+def _egpu_identity_status(cards, identity_path=None) -> dict:
+    saved = _read_egpu_identity(identity_path)
+    if not saved:
+        return {"bound": False, "present": False, "profile": "", "pci": ""}
+    matches = [
+        card for card in _disconnect_egpu_candidates(cards)
+        if str(card.get("pci") or "").lower() == str(saved.get("pci") or "").lower()
+        and str(card.get("vendor") or "").lower() == str(saved.get("vendor") or "").lower()
+        and str(card.get("device") or "").lower() == str(saved.get("device") or "").lower()
+    ]
+    return {
+        "bound": True,
+        "present": len(matches) == 1,
+        "profile": str(saved.get("profile") or ""),
+        "pci": str(saved.get("pci") or ""),
+        "vendor": str(saved.get("vendor") or ""),
+        "device": str(saved.get("device") or ""),
+    }
+
+
+def _validated_gpd_g1_identity(
+    card: dict,
+    pci_inventory=None,
+    thunderbolt_root=Path("/sys/bus/thunderbolt/devices"),
+) -> dict:
+    """Return a privacy-preserving stable identity for the validated G1 profile."""
+    selected_pci = str((card or {}).get("pci") or "").strip().lower()
+    vendor = str((card or {}).get("vendor") or "").strip().lower()
+    device = str((card or {}).get("device") or "").strip().lower()
+    if vendor != "0x1002" or device != "0x7480":
+        return {
+            "ok": False,
+            "validated": False,
+            "error_code": "unsupported_identity_profile",
+            "error": "The connected GPU is not the validated GPD G1 RX 7600M XT profile.",
+        }
+
+    inventory = _pci_inventory() if pci_inventory is None else list(pci_inventory)
+    topology = _analyze_gpd_g1_topology(selected_pci, inventory)
+    thunderbolt = _gpd_g1_thunderbolt_device(thunderbolt_root)
+    if not topology.get("complete") or not thunderbolt.get("complete"):
+        return {
+            "ok": False,
+            "validated": False,
+            "error_code": "gpd_g1_topology_unverified",
+            "error": "; ".join(
+                part for part in (
+                    str(topology.get("error") or ""),
+                    str(thunderbolt.get("error") or ""),
+                ) if part
+            ) or "The exact GPD G1 topology could not be verified.",
+            "topology": topology,
+        }
+
+    tb_device = thunderbolt.get("device") or {}
+    unique_id = str(tb_device.get("unique_id") or "")
+    if not unique_id:
+        return {
+            "ok": False,
+            "validated": False,
+            "error_code": "gpd_g1_unique_id_missing",
+            "error": "The GPD G1 USB4 identity is unavailable.",
+        }
+    identity = {
+        "version": 1,
+        "profile": str(topology.get("profile") or ""),
+        "pci": selected_pci,
+        "vendor": vendor,
+        "device": device,
+        "root_pci": str(topology.get("root_pci") or "").lower(),
+        "thunderbolt_vendor": str(tb_device.get("vendor") or ""),
+        "thunderbolt_device": str(tb_device.get("name") or ""),
+        "thunderbolt_unique_id_sha256": _identity_sha256(unique_id),
+    }
+    return {"ok": True, "validated": True, "identity": identity}
+
+
+def _persist_egpu_identity(identity: dict, identity_path=None) -> dict:
+    """Persist only a fully validated identity; never store the raw USB4 unique ID."""
+    value = dict(identity or {})
+    required = (
+        "version",
+        "profile",
+        "pci",
+        "vendor",
+        "device",
+        "root_pci",
+        "thunderbolt_unique_id_sha256",
+    )
+    if any(not value.get(key) for key in required):
+        return {"ok": False, "persisted": False, "error": "Validated eGPU identity is incomplete."}
+    if not re.fullmatch(r"[0-9a-f]{64}", str(value.get("thunderbolt_unique_id_sha256") or "")):
+        return {"ok": False, "persisted": False, "error": "USB4 identity hash is invalid."}
+    value["confirmed_at"] = round(time.time(), 3)
+    path = Path(identity_path) if identity_path is not None else EGPU_IDENTITY_PATH
+    try:
+        atomic_write(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
+        path.chmod(0o644)
+    except Exception as e:
+        return {"ok": False, "persisted": False, "error": str(e)}
+    log_event(
+        "device.identity.confirmed",
+        profile=value["profile"],
+        pci=value["pci"],
+        vendor=value["vendor"],
+        device=value["device"],
+    )
+    return {"ok": True, "persisted": True, "identity": value, "path": str(path)}
+
+
+def _resolve_egpu_for_switch(
+    cards,
+    identity_path=None,
+    pci_inventory=None,
+    thunderbolt_root=Path("/sys/bus/thunderbolt/devices"),
+) -> dict:
+    """Resolve a mutation target without ever falling through to an unrelated GPU."""
+    candidates = _disconnect_egpu_candidates(cards)
+    saved = _read_egpu_identity(identity_path)
+    if saved:
+        matches = [
+            card for card in candidates
+            if str(card.get("pci") or "").lower() == str(saved.get("pci") or "").lower()
+            and str(card.get("vendor") or "").lower() == str(saved.get("vendor") or "").lower()
+            and str(card.get("device") or "").lower() == str(saved.get("device") or "").lower()
+        ]
+        if len(matches) != 1:
+            return {
+                "ok": False,
+                "error_code": "bound_egpu_missing",
+                "error": "The previously confirmed eGPU is not present at its exact PCI identity.",
+                "saved_identity": saved,
+                "candidate_count": len(candidates),
+            }
+        observed = _validated_gpd_g1_identity(matches[0], pci_inventory, thunderbolt_root)
+        current = observed.get("identity") or {}
+        stable_keys = (
+            "profile",
+            "pci",
+            "vendor",
+            "device",
+            "root_pci",
+            "thunderbolt_unique_id_sha256",
+        )
+        if not observed.get("validated") or any(saved.get(key) != current.get(key) for key in stable_keys):
+            return {
+                "ok": False,
+                "error_code": "bound_egpu_identity_changed",
+                "error": "The connected USB4 GPU does not match the previously confirmed GPD G1 identity.",
+                "saved_identity": saved,
+                "observed_identity": current,
+            }
+        return {"ok": True, "card": matches[0], "identity": current, "bound": True}
+
+    if len(candidates) != 1:
+        return {
+            "ok": False,
+            "error_code": "egpu_identity_ambiguous" if candidates else "egpu_not_found",
+            "error": f"Expected exactly one external GPU, found {len(candidates)}.",
+            "candidate_count": len(candidates),
+        }
+    selected = candidates[0]
+    observed = _validated_gpd_g1_identity(selected, pci_inventory, thunderbolt_root)
+    if (
+        str(selected.get("vendor") or "").lower() == "0x1002"
+        and str(selected.get("device") or "").lower() == "0x7480"
+        and not observed.get("validated")
+    ):
+        return dict(observed, card=None)
+    return {
+        "ok": True,
+        "card": selected,
+        "identity": observed.get("identity") or {
+            "pci": str(selected.get("pci") or "").lower(),
+            "vendor": str(selected.get("vendor") or "").lower(),
+            "device": str(selected.get("device") or "").lower(),
+        },
+        "bound": False,
+        "persistence_supported": bool(observed.get("validated")),
+    }
+
+
+def _confirm_transition_egpu_identity(desired: dict) -> dict:
+    """Re-prove and persist the G1 identity only after external output is live."""
+    expected = dict((desired or {}).get("egpu") or {})
+    if expected.get("profile") != "gpd-g1-rx7600mxt-titan-ridge":
+        return {"ok": True, "persisted": False, "reason": "identity_profile_not_supported"}
+    cards = scan_cards()
+    matches = [
+        card for card in _disconnect_egpu_candidates(cards)
+        if str(card.get("pci") or "").lower() == str(expected.get("pci") or "").lower()
+    ]
+    if len(matches) != 1:
+        return {"ok": False, "persisted": False, "error": "The selected eGPU disappeared before identity confirmation."}
+    observed = _validated_gpd_g1_identity(matches[0])
+    current = observed.get("identity") or {}
+    stable_keys = (
+        "profile",
+        "pci",
+        "vendor",
+        "device",
+        "root_pci",
+        "thunderbolt_unique_id_sha256",
+    )
+    if not observed.get("validated") or any(expected.get(key) != current.get(key) for key in stable_keys):
+        return {"ok": False, "persisted": False, "error": "The eGPU identity changed during the display transition."}
+    return _persist_egpu_identity(current)
+
+
 def _class_nodes_under_path(class_root, dev_root, root_path: str, allowed_name_pattern: str) -> dict:
     nodes = []
     try:
@@ -1182,7 +1422,7 @@ def safe_live_unplug(
             "gpu_pci": (readiness.get("identity") or {}).get("pci"),
             "root_pci": topology.get("root_pci"),
             "thunderbolt_id": tb_device.get("id"),
-            "thunderbolt_unique_id": tb_device.get("unique_id"),
+            "thunderbolt_unique_id_sha256": tb_device.get("unique_id_sha256"),
         }
         if current_fingerprint != authorization.get("fingerprint"):
             return {
@@ -1406,7 +1646,9 @@ def safe_disconnect_readiness(
         })
     else:
         root_path = topology.get("root_path") or ""
-        thunderbolt = _gpd_g1_thunderbolt_device(thunderbolt_root)
+        thunderbolt = _public_thunderbolt_status(
+            _gpd_g1_thunderbolt_device(thunderbolt_root)
+        )
         usb_devices = _usb_devices_under_path(root_path, usb_root)
         block_devices = _block_devices_under_path(
             root_path,
@@ -1494,7 +1736,7 @@ def safe_disconnect_readiness(
             "gpu_pci": identity["pci"],
             "root_pci": topology.get("root_pci"),
             "thunderbolt_id": tb_device.get("id"),
-            "thunderbolt_unique_id": tb_device.get("unique_id"),
+            "thunderbolt_unique_id_sha256": tb_device.get("unique_id_sha256"),
         })
         token_expires_in = int(LIVE_UNPLUG_TOKEN_SECONDS)
 
@@ -3313,6 +3555,7 @@ def build_status(heavy: bool = False):
         "gamescope": current_gamescope_process(),
         "gamescope_integration": gamescope_integration_status(),
         "display_transition": _read_display_transition(),
+        "egpu_identity": _egpu_identity_status(cards),
         "sleep_resume": _read_resume_state(),
         "paths": {
             "gamescope_session": str(GAMESCOPE_SESSION),
@@ -3321,6 +3564,7 @@ def build_status(heavy: bool = False):
             "env_override": str(ENV_OVERRIDE),
             "gamescope_shim": str(GAMESCOPE_SHIM),
             "display_transition": str(TRANSITION_PATH),
+            "egpu_identity": str(EGPU_IDENTITY_PATH),
             "sleep_resume": str(RESUME_STATE_PATH),
         },
     }
@@ -4526,7 +4770,12 @@ def reconcile_display_transition(gs_cmdline=None) -> dict:
         return transition
     gamescope = current_gamescope_process() if gs_cmdline is None else str(gs_cmdline or "")
     if _gamescope_matches_desired(gamescope, transition.get("desired") or {}):
-        return _finish_display_transition(transition, "completed", {"gamescope": gamescope[-2000:]})
+        details = {"gamescope": gamescope[-2000:]}
+        if str(transition.get("target") or "") == "external":
+            details["egpu_identity"] = _confirm_transition_egpu_identity(
+                transition.get("desired") or {}
+            )
+        return _finish_display_transition(transition, "completed", details)
     age = max(0.0, time.time() - float(transition.get("created_at") or time.time()))
     if age >= 45:
         failure = {
@@ -4786,6 +5035,7 @@ def _apply_restart_sync(desired: dict, transition: dict):
 
     restart = restart_gamescope_session_target(desired)
     if restart.get("ok"):
+        restart["egpu_identity"] = _confirm_transition_egpu_identity(desired)
         try:
             panel_result = internal_panel_off()
             restart["internal_panel_off"] = panel_result
@@ -4793,7 +5043,14 @@ def _apply_restart_sync(desired: dict, transition: dict):
         except Exception as e:
             restart["internal_panel_off"] = {"ok": False, "error": str(e)}
             log(f"internal_panel_off EXCEPTION: {e}")
-        restart["transition"] = _finish_display_transition(transition, "completed", restart.get("readiness"))
+        restart["transition"] = _finish_display_transition(
+            transition,
+            "completed",
+            {
+                "readiness": restart.get("readiness"),
+                "egpu_identity": restart.get("egpu_identity"),
+            },
+        )
     else:
         restart["rollback"] = _rollback_external_transition(
             transition,
@@ -5500,8 +5757,23 @@ class Plugin:
         Do NOT patch /usr/lib/steamos/gamescope-session.
         """
         status = build_status(heavy=True)
-        egpu = status.get("egpu")
-        connector = status.get("recommended_connector")
+        selection = None
+        if "cards" in status:
+            selection = _resolve_egpu_for_switch(status.get("cards") or [])
+            if not selection.get("ok"):
+                return {
+                    "ok": False,
+                    "error_code": selection.get("error_code") or "egpu_identity_unverified",
+                    "error": selection.get("error") or "The exact eGPU identity could not be verified.",
+                    "egpu_identity": selection,
+                }
+            egpu = selection.get("card")
+            connector = pick_connector(egpu)
+        else:
+            # Unit/legacy callers may provide the historical reduced status shape.
+            egpu = status.get("egpu")
+            connector = status.get("recommended_connector")
+            selection = {"ok": bool(egpu), "card": egpu, "identity": {}}
 
         if not egpu:
             return {"ok": False, "error": "eGPU не найден"}
@@ -5523,12 +5795,13 @@ class Plugin:
         # Do NOT append eDP-1 here, otherwise internal scanout stays enabled.
         output_order = f"{output_name}"
 
-        fingerprint = {
+        fingerprint = dict(selection.get("identity") or {})
+        fingerprint.update({
             "card": egpu.get("card"),
             "pci": egpu.get("pci"),
             "vendor": egpu.get("vendor"),
             "device": egpu.get("device"),
-        }
+        })
         if restart and not fingerprint.get("pci"):
             return {
                 "ok": False,
@@ -5603,6 +5876,7 @@ class Plugin:
             if not restart_needed:
                 result["restart_skipped"] = True
                 result["restart_reason"] = "requested display state is already active"
+                result["egpu_identity"] = _confirm_transition_egpu_identity(desired)
             else:
                 transition = _write_display_transition("external", desired)
                 if async_handoff:

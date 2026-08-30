@@ -213,7 +213,7 @@ echo '===== PLUGIN FILES ====='
 test -d "`$PLUGIN_DIR" && ls -ld "`$PLUGIN_DIR" || echo 'plugin directory missing'
 echo '===== PLUGIN STATE ====='
 test -d "`$STATE_DIR" && ls -ld "`$STATE_DIR" || echo 'plugin state directory missing'
-for file in output_order.conf prefer_vk_device.conf gamescope_mode.conf display_transition.json; do
+for file in output_order.conf prefer_vk_device.conf gamescope_mode.conf egpu_identity.json display_transition.json; do
     echo "--- `$file ---"
     if test -r "`$PLUGIN_DIR/`$file"; then
         echo "source=`$PLUGIN_DIR/`$file"
@@ -399,7 +399,7 @@ tar -xzf "`$ARCHIVE" -C "`$STAGING"
 if test -d "`$PLUGIN_DIR"; then mv "`$PLUGIN_DIR" "`$BACKUP"; fi
 mv "`$STAGING" "`$PLUGIN_DIR"
 if test -d "`$BACKUP"; then
-  for file in output_order.conf prefer_vk_device.conf gamescope_mode.conf tv_control_automation.json hotkey_settings.json; do
+  for file in output_order.conf prefer_vk_device.conf gamescope_mode.conf egpu_identity.json tv_control_automation.json hotkey_settings.json; do
     if test "`$STATE_DIR" != "`$PLUGIN_DIR" && test -f "`$STATE_DIR/`$file"; then
       cp -p "`$STATE_DIR/`$file" "`$PLUGIN_DIR/`$file"
     elif test -f "`$BACKUP/`$file"; then

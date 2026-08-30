@@ -32,6 +32,7 @@ class RemoteHarnessTests(unittest.TestCase):
 
         self.assertIn('STAGING="`$BACKUP_ROOT/.staging-`$STAMP"', deploy)
         self.assertNotIn('STAGING="`$PLUGIN_DIR.staging-`$STAMP"', deploy)
+        self.assertIn("egpu_identity.json", deploy)
 
 
 def status(*, connector="HDMI-A-1", output_order="", gamescope=""):
@@ -174,6 +175,124 @@ class HardwareCompatibilityTests(unittest.TestCase):
         )
 
         self.assertFalse(warning["warning"])
+
+
+class StableEgpuIdentityTests(unittest.IsolatedAsyncioTestCase):
+    def _egpu(self, pci="0000:08:00.0", card="card1"):
+        return {
+            "card": card,
+            "path": f"/dev/dri/{card}",
+            "pci": pci,
+            "vendor": "0x1002",
+            "device": "0x7480",
+            "is_egpu": True,
+            "connectors": [{"name": "HDMI-A-1", "status": "connected"}],
+        }
+
+    def _inventory(self):
+        root = "/sys/devices/pci0000:00/0000:00:03.1/0000:04:00.0"
+
+        def item(pci, suffix, vendor, device, device_class, driver="pcieport", removable=False):
+            return {
+                "pci": pci,
+                "real_path": root + suffix,
+                "vendor": vendor,
+                "device": device,
+                "class": device_class,
+                "driver": driver,
+                "remove_path": f"/sys/bus/pci/devices/{pci}/remove",
+                "remove_available": removable,
+            }
+
+        return [
+            item("0000:04:00.0", "", "0x8086", "0x15ef", "0x060400", removable=True),
+            item("0000:05:01.0", "/0000:05:01.0", "0x8086", "0x15ef", "0x060400"),
+            item("0000:05:02.0", "/0000:05:02.0", "0x8086", "0x15ef", "0x060400"),
+            item("0000:06:00.0", "/0000:05:01.0/0000:06:00.0", "0x1002", "0x1478", "0x060400"),
+            item("0000:07:00.0", "/0000:05:01.0/0000:06:00.0/0000:07:00.0", "0x1002", "0x1479", "0x060400"),
+            item("0000:08:00.0", "/0000:05:01.0/0000:06:00.0/0000:07:00.0/0000:08:00.0", "0x1002", "0x7480", "0x030000", "amdgpu"),
+            item("0000:08:00.1", "/0000:05:01.0/0000:06:00.0/0000:07:00.0/0000:08:00.1", "0x1002", "0xab30", "0x040300", "snd_hda_intel"),
+            item("0000:09:00.0", "/0000:05:02.0/0000:09:00.0", "0x8086", "0x15f0", "0x0c0330", "xhci_hcd"),
+        ]
+
+    def _thunderbolt(self):
+        return {
+            "ok": True,
+            "complete": True,
+            "device": {
+                "id": "0-2",
+                "name": "Tapex Creek",
+                "vendor": "Intel",
+                "authorized": "1",
+                "unique_id": "private-g1-test-id",
+            },
+        }
+
+    def test_validated_g1_identity_hashes_the_usb4_unique_id(self):
+        with mock.patch.object(main, "_gpd_g1_thunderbolt_device", return_value=self._thunderbolt()):
+            result = main._validated_gpd_g1_identity(self._egpu(), self._inventory())
+
+        self.assertTrue(result["validated"])
+        encoded = json.dumps(result)
+        self.assertNotIn("private-g1-test-id", encoded)
+        self.assertRegex(result["identity"]["thunderbolt_unique_id_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_persisted_identity_resolves_only_the_exact_g1(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            main, "_gpd_g1_thunderbolt_device", return_value=self._thunderbolt()
+        ), mock.patch.object(main, "log_event"):
+            path = Path(tmp) / "egpu_identity.json"
+            observed = main._validated_gpd_g1_identity(self._egpu(), self._inventory())["identity"]
+            persisted = main._persist_egpu_identity(observed, path)
+            persisted_text = path.read_text(encoding="utf-8")
+            resolved = main._resolve_egpu_for_switch(
+                [self._egpu()],
+                identity_path=path,
+                pci_inventory=self._inventory(),
+            )
+            wrong_slot = main._resolve_egpu_for_switch(
+                [self._egpu("0000:0a:00.0")],
+                identity_path=path,
+                pci_inventory=self._inventory(),
+            )
+
+        self.assertTrue(persisted["persisted"])
+        self.assertNotIn("private-g1-test-id", persisted_text)
+        self.assertTrue(resolved["bound"])
+        self.assertEqual(resolved["card"]["pci"], "0000:08:00.0")
+        self.assertFalse(wrong_slot["ok"])
+        self.assertEqual(wrong_slot["error_code"], "bound_egpu_missing")
+
+    def test_unverified_g1_topology_fails_closed_before_switching(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            main, "_gpd_g1_thunderbolt_device", return_value=self._thunderbolt()
+        ):
+            result = main._resolve_egpu_for_switch(
+                [self._egpu()],
+                identity_path=Path(tmp) / "missing.json",
+                pci_inventory=[],
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_code"], "gpd_g1_topology_unverified")
+
+    async def test_ambiguous_external_gpus_are_rejected_before_configuration_changes(self):
+        detected = {
+            "cards": [self._egpu(), self._egpu("0000:0a:00.0", "card2")],
+            "egpu": self._egpu(),
+            "recommended_connector": {"name": "HDMI-A-1", "status": "connected"},
+            "gamescope": "88 gamescope -O *,eDP-1",
+        }
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            main, "EGPU_IDENTITY_PATH", Path(tmp) / "missing.json"
+        ), mock.patch.object(main, "build_status", return_value=detected), mock.patch.object(
+            main, "write_gamescope_wrapper_config"
+        ) as config_mock:
+            result = await main.Plugin.apply_egpu_mode(restart=True)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_code"], "egpu_identity_ambiguous")
+        config_mock.assert_not_called()
 
 
 class GamescopeEnvironmentTests(unittest.TestCase):
@@ -984,6 +1103,14 @@ class SafeDisconnectReadinessTests(unittest.TestCase):
         self.assertEqual(result["candidate_count"], 2)
         self.assertEqual(result["blockers"][0]["code"], "egpu_identity_ambiguous")
 
+    def test_readiness_report_hashes_the_usb4_unique_id(self):
+        result = self._readiness()
+        encoded = json.dumps(result)
+
+        self.assertNotIn("g1-test-id", encoded)
+        device = result["checks"]["thunderbolt_authorization"]["device"]
+        self.assertRegex(device["unique_id_sha256"], r"^[0-9a-f]{64}$")
+
     def test_exact_drm_nodes_and_clients_are_reported_without_cmdline(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1132,7 +1259,7 @@ class SafeDisconnectReadinessTests(unittest.TestCase):
                 "gpu_pci": "g1-gpu",
                 "root_pci": "g1-root",
                 "thunderbolt_id": "0-2",
-                "thunderbolt_unique_id": "g1-test-id",
+                "thunderbolt_unique_id_sha256": main._identity_sha256("g1-test-id"),
             }
             token = main._issue_live_unplug_token(fingerprint)
             readiness = {
@@ -1148,7 +1275,7 @@ class SafeDisconnectReadinessTests(unittest.TestCase):
                         "device": {
                             "id": "0-2",
                             "name": "Tapex Creek",
-                            "unique_id": "g1-test-id",
+                            "unique_id_sha256": main._identity_sha256("g1-test-id"),
                             "authorized_path": str(authorized_path),
                         }
                     },

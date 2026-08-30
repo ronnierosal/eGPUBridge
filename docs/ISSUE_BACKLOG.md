@@ -167,11 +167,25 @@ Current safe foundation:
 
 ### EGB-004 - Use stable external-GPU identity
 
-Status: Open
+Status: Implemented for the validated GPD G1 profile; hardware persistence
+verification pending and generic enclosure enrollment remains open
 
 The code treats every DRM GPU with `boot_vga != 1` as an eGPU. This can select a
 built-in dGPU, virtual adapter, or unrelated display device. Persist an exact PCI
 address and verify its hotplug/topology relationship before any mutation.
+
+The display-switch mutation path now rejects zero or multiple external GPUs and,
+for the RX 7600M XT GPD G1, requires the validated Titan Ridge PCI subtree plus
+the exact authorized Tapex Creek USB4 device. After a verified external transition
+it persists the PCI GPU, removable root, vendor/device, profile, and a SHA-256 hash
+of the USB4 unique ID. Later switches must match that complete binding and cannot
+fall through to another secondary GPU. The raw USB4 unique ID is never written to
+the identity file, status response, or transition record. Deployment and remote
+snapshot flows preserve `egpu_identity.json`.
+
+Other enclosure/GPU profiles retain the existing single-candidate behavior until
+an explicit enrollment UI and a generic hotplug-topology proof are designed; they
+are not represented as validated persistent identities.
 
 Relevant code: [`main.py`](../main.py#L548)
 

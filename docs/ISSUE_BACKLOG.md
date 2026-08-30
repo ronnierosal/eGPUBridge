@@ -455,8 +455,8 @@ while retaining the narrower readiness timer for diagnosis.
 
 ### EGB-028 - Recover safely when sleep or resume changes eGPU availability
 
-Status: In progress - absent-GPU Gamescope startup failback implemented; automatic
-pre-suspend/resume orchestration and hardware validation pending
+Status: In progress - startup failback and a debounced resume observer implemented;
+hardware validation pending
 
 If the Ally sleeps while Gamescope is bound to the G1, the system may wake after
 the G1 was powered off or unplugged. External-only output and a stale Vulkan
@@ -467,16 +467,20 @@ starts with `-O *,eDP-1`, clears its Mesa device selector, and drops the externa
 mode override. Plugin startup then persists that verified internal failback and
 clears the user-manager selector.
 
+The plugin now watches for a suspend-sized gap between wall and monotonic clocks.
+On resume it waits up to twenty seconds for the exact configured vendor/device to
+re-enumerate. If it returns, the external configuration is left untouched. If it
+remains absent, the observer persists internal configuration, clears the user
+Mesa selector, re-enables the Ally panel, restarts Gamescope only when needed,
+and writes a compact durable resume outcome. The shim remains the final startup
+failback if the plugin observer is unavailable.
+
 Remaining acceptance criteria:
 
 - Validate suspend/resume with the G1 remaining attached and powered.
 - Validate waking after the G1 is powered off or removed during sleep.
-- Add a debounced resume observer that distinguishes slow enumeration from an
-  absent device and never races a valid G1 reconnect.
-- If the existing Gamescope process survives resume but its GPU disappeared,
-  recover the internal panel and restart the session with a bounded verifier.
-- Capture a durable `suspend`, `resume`, device-present/absent, action, and outcome
-  record without exposing local identifiers.
+- Hardware-validate that slow G1 enumeration is not mistaken for removal.
+- Verify the compact resume record across both attached and absent-device cases.
 - Always prefer a working internal display over automatic return to the eGPU;
   switching external again can remain a deliberate user action.
 
@@ -551,7 +555,7 @@ Ally all passed the follow-up hardware test.
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Thirty-five deterministic tests and CI checks are passing locally.
+- Thirty-eight deterministic tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 

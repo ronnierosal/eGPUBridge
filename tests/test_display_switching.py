@@ -471,6 +471,80 @@ class MissingEgpuRecoveryTests(unittest.TestCase):
         config_mock.assert_not_called()
 
 
+class ResumeRecoveryTests(unittest.TestCase):
+    def test_resume_recovery_cancels_cleanly_during_plugin_unload(self):
+        stop_event = mock.Mock()
+        stop_event.is_set.return_value = True
+        with mock.patch.object(
+            main, "_configured_external_vk_device", return_value="1002:7480"
+        ), mock.patch.object(
+            main, "_write_resume_state", side_effect=lambda status, details=None: {
+                "status": status,
+                "details": details or {},
+            }
+        ), mock.patch.object(main, "write_gamescope_wrapper_config") as config_mock:
+            result = main._recover_after_resume(
+                enumeration_timeout_s=20,
+                stop_event=stop_event,
+            )
+
+        self.assertEqual(result["status"], "resume_recovery_cancelled")
+        config_mock.assert_not_called()
+
+    def test_resume_keeps_external_configuration_when_exact_egpu_returns(self):
+        with mock.patch.object(
+            main, "_configured_external_vk_device", return_value="1002:7480"
+        ), mock.patch.object(
+            main, "_pci_vendor_device_present", return_value=True
+        ), mock.patch.object(
+            main, "_write_resume_state", side_effect=lambda status, details=None: {
+                "status": status,
+                "details": details or {},
+            }
+        ), mock.patch.object(main, "write_gamescope_wrapper_config") as config_mock:
+            result = main._recover_after_resume(enumeration_timeout_s=0)
+
+        self.assertEqual(result["status"], "resume_egpu_present")
+        config_mock.assert_not_called()
+
+    def test_resume_restores_internal_when_configured_egpu_is_absent(self):
+        ready = {"ok": True, "readiness": {"ok": True}}
+        with mock.patch.object(
+            main, "_configured_external_vk_device", return_value="1002:7480"
+        ), mock.patch.object(
+            main, "_pci_vendor_device_present", return_value=False
+        ), mock.patch.object(
+            main, "_write_resume_state", side_effect=lambda status, details=None: {
+                "status": status,
+                "details": details or {},
+            }
+        ), mock.patch.object(
+            main, "write_gamescope_wrapper_config", return_value={"ok": True}
+        ) as config_mock, mock.patch.object(
+            main, "write_gamescope_mode_config", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "update_gamescope_user_environment", return_value={"ok": True}
+        ) as environment_mock, mock.patch.object(
+            main, "internal_panel_on", return_value={"ok": True}
+        ), mock.patch.object(
+            main,
+            "current_gamescope_process",
+            return_value="77 gamescope -O HDMI-A-2 --prefer-vk-device 1002:7480",
+        ), mock.patch.object(
+            main, "_write_display_transition", return_value={"id": "resume-1"}
+        ), mock.patch.object(
+            main, "restart_gamescope_session_target", return_value=ready
+        ) as restart_mock, mock.patch.object(
+            main, "_finish_display_transition", return_value={"status": "completed"}
+        ):
+            result = main._recover_after_resume(enumeration_timeout_s=0)
+
+        self.assertEqual(result["status"], "resume_recovered_internal")
+        config_mock.assert_called_once_with("*,eDP-1", "disabled")
+        environment_mock.assert_called_once_with(unset=["MESA_VK_DEVICE_SELECT"])
+        restart_mock.assert_called_once()
+
+
 class GamescopeIntegrationTests(unittest.TestCase):
     def test_status_reports_an_unreadable_user_config_without_raising(self):
         context = {

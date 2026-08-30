@@ -35,6 +35,7 @@ PREFER_VK_DEVICE_CONF = PLUGIN_DIR / "prefer_vk_device.conf"
 GAMESCOPE_MODE_CONF = PLUGIN_DIR / "gamescope_mode.conf"
 GAMESCOPE_SHIM = PLUGIN_DIR / "bin" / "gamescope"
 TRANSITION_PATH = PLUGIN_DIR / "display_transition.json"
+RESUME_STATE_PATH = PLUGIN_DIR / "sleep_resume.json"
 GAMESCOPE_UNIT = "gamescope-session.service"
 GAMESCOPE_TARGET = "gamescope-session.target"
 
@@ -2391,6 +2392,7 @@ def build_status(heavy: bool = False):
         "gamescope": current_gamescope_process(),
         "gamescope_integration": gamescope_integration_status(),
         "display_transition": _read_display_transition(),
+        "sleep_resume": _read_resume_state(),
         "paths": {
             "gamescope_session": str(GAMESCOPE_SESSION),
             "backup_original": str(BACKUP_ORIGINAL),
@@ -2398,6 +2400,7 @@ def build_status(heavy: bool = False):
             "env_override": str(ENV_OVERRIDE),
             "gamescope_shim": str(GAMESCOPE_SHIM),
             "display_transition": str(TRANSITION_PATH),
+            "sleep_resume": str(RESUME_STATE_PATH),
         },
     }
 
@@ -3804,6 +3807,9 @@ def _restore_restart_sync(desired: dict, transition: dict):
 
 _display_restart_jobs = {}
 _display_restart_jobs_lock = threading.Lock()
+_resume_watcher_stop = None
+_resume_watcher_thread = None
+_resume_recovery_lock = threading.Lock()
 
 
 def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: float = 1.0) -> dict:
@@ -3843,9 +3849,197 @@ def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: 
     }
 
 
+def _read_resume_state() -> dict:
+    try:
+        value = json.loads(RESUME_STATE_PATH.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_resume_state(status: str, details=None) -> dict:
+    value = {
+        "status": str(status),
+        "updated_at": time.time(),
+        "details": dict(details or {}),
+    }
+    try:
+        atomic_write(RESUME_STATE_PATH, json.dumps(value, indent=2, ensure_ascii=False) + "\n")
+    except Exception as e:
+        value["write_error"] = str(e)
+    log("RESUME_STATE " + json.dumps(value, ensure_ascii=False))
+    return value
+
+
+def _configured_external_vk_device() -> str:
+    configured = read_text(PREFER_VK_DEVICE_CONF).strip().lower() if PREFER_VK_DEVICE_CONF.exists() else ""
+    if _is_valid_egpu_vk_id(configured):
+        return configured
+    live = _gamescope_vk_device(current_gamescope_process())
+    return live if _is_valid_egpu_vk_id(live) else ""
+
+
+def _pci_vendor_device_present(vendor_device: str) -> bool:
+    value = str(vendor_device or "").strip().lower()
+    if not _is_valid_egpu_vk_id(value):
+        return False
+    wanted_vendor, wanted_device = ("0x" + part for part in value.split(":", 1))
+    for vendor_path in Path("/sys/bus/pci/devices").glob("*/vendor"):
+        device_path = vendor_path.parent / "device"
+        if (
+            _read_text(vendor_path).lower() == wanted_vendor
+            and _read_text(device_path).lower() == wanted_device
+        ):
+            return True
+    return False
+
+
+def _recover_after_resume(
+    enumeration_timeout_s: float = 20.0,
+    poll_interval_s: float = 0.5,
+    stop_event=None,
+) -> dict:
+    """Prefer a verified internal session when the configured eGPU vanished during sleep."""
+    if not _resume_recovery_lock.acquire(blocking=False):
+        return {"ok": True, "skipped": True, "reason": "resume_recovery_already_running"}
+    try:
+        configured_device = _configured_external_vk_device()
+        if not configured_device:
+            return _write_resume_state(
+                "resume_no_external_configuration",
+                {"action": "none"},
+            )
+
+        _write_resume_state(
+            "resume_waiting_for_egpu",
+            {
+                "configured_device": configured_device,
+                "enumeration_timeout_seconds": float(enumeration_timeout_s),
+            },
+        )
+        deadline = time.monotonic() + max(0.0, float(enumeration_timeout_s))
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                return _write_resume_state(
+                    "resume_recovery_cancelled",
+                    {"action": "none", "reason": "plugin_unload"},
+                )
+            if _pci_vendor_device_present(configured_device):
+                return _write_resume_state(
+                    "resume_egpu_present",
+                    {"configured_device": configured_device, "action": "none"},
+                )
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(max(0.05, float(poll_interval_s)))
+
+        desired = {
+            "target": "internal",
+            "output_order": "*,eDP-1",
+            "connector": "eDP-1",
+            "prefer_vk_device": "disabled",
+            "mode": {},
+        }
+        configuration = write_gamescope_wrapper_config("*,eDP-1", "disabled")
+        mode = write_gamescope_mode_config(disabled=True)
+        environment = update_gamescope_user_environment(unset=["MESA_VK_DEVICE_SELECT"])
+        try:
+            panel = internal_panel_on()
+        except Exception as e:
+            panel = {"ok": False, "error": str(e)}
+
+        live_gamescope = current_gamescope_process()
+        restart = {"ok": True, "skipped": True, "reason": "internal_state_already_live"}
+        if not _gamescope_matches_desired(live_gamescope, desired):
+            transition = _write_display_transition("internal", desired)
+            restart = restart_gamescope_session_target(desired)
+            restart["transition"] = _finish_display_transition(
+                transition,
+                "completed" if restart.get("ok") else "failed",
+                restart.get("readiness"),
+            )
+
+        ok = bool(
+            configuration.get("ok")
+            and mode.get("ok")
+            and environment.get("ok")
+            and restart.get("ok")
+        )
+        return _write_resume_state(
+            "resume_recovered_internal" if ok else "resume_recovery_failed",
+            {
+                "configured_device": configured_device,
+                "action": "restore_internal",
+                "configuration_ok": bool(configuration.get("ok")),
+                "mode_ok": bool(mode.get("ok")),
+                "environment_ok": bool(environment.get("ok")),
+                "panel_ok": bool(panel.get("ok")),
+                "restart_ok": bool(restart.get("ok")),
+                "restart_skipped": bool(restart.get("skipped")),
+            },
+        )
+    finally:
+        _resume_recovery_lock.release()
+
+
+def _resume_watcher_loop(stop_event):
+    last_wall = time.time()
+    last_monotonic = time.monotonic()
+    while not stop_event.wait(2.0):
+        now_wall = time.time()
+        now_monotonic = time.monotonic()
+        wall_elapsed = now_wall - last_wall
+        monotonic_elapsed = now_monotonic - last_monotonic
+        suspended_seconds = wall_elapsed - monotonic_elapsed
+        last_wall = now_wall
+        last_monotonic = now_monotonic
+        if suspended_seconds < 5.0:
+            continue
+        _write_resume_state(
+            "resume_detected",
+            {
+                "source": "wall_monotonic_gap",
+                "suspended_seconds": round(suspended_seconds, 3),
+            },
+        )
+        try:
+            _recover_after_resume(stop_event=stop_event)
+        except Exception as e:
+            _write_resume_state("resume_recovery_failed", {"error": str(e)[:500]})
+
+
+def _start_resume_watcher() -> bool:
+    global _resume_watcher_stop, _resume_watcher_thread
+    if _resume_watcher_thread is not None and _resume_watcher_thread.is_alive():
+        return True
+    _resume_watcher_stop = threading.Event()
+    _resume_watcher_thread = threading.Thread(
+        target=_resume_watcher_loop,
+        args=(_resume_watcher_stop,),
+        name="egpubridge-resume-watcher",
+        daemon=True,
+    )
+    _resume_watcher_thread.start()
+    log("RESUME_WATCHER started")
+    return True
+
+
+def _stop_resume_watcher() -> bool:
+    global _resume_watcher_stop, _resume_watcher_thread
+    if _resume_watcher_stop is not None:
+        _resume_watcher_stop.set()
+    if _resume_watcher_thread is not None and _resume_watcher_thread.is_alive():
+        _resume_watcher_thread.join(timeout=3.0)
+    _resume_watcher_stop = None
+    _resume_watcher_thread = None
+    log("RESUME_WATCHER stopped")
+    return True
+
+
 class Plugin:
     async def _main(self):
         log(f"init v{VERSION}")
+        _start_resume_watcher()
         status = build_status()
         try:
             recovery = reconcile_missing_egpu_configuration(status)
@@ -3870,6 +4064,7 @@ class Plugin:
                 log(f"init: internal_panel_off failed: {e}")
 
     async def _unload(self):
+        _stop_resume_watcher()
         log("unload")
 
     async def status(self):

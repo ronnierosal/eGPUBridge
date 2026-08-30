@@ -328,12 +328,39 @@ def _is_quiet_status_cmd(cmd) -> bool:
 
 
 
+_BUNDLED_RUNTIME_ENV_VARS = (
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "PYTHONHOME",
+    "PYTHONPATH",
+)
+
+
+def _system_subprocess_env():
+    """Return an environment safe for SteamOS system executables.
+
+    Decky may run plugins from a bundled Python/PyInstaller environment. Its
+    library paths can shadow SteamOS OpenSSL and make tools such as pacman fail
+    before they start.
+    """
+    env = os.environ.copy()
+    for key in _BUNDLED_RUNTIME_ENV_VARS:
+        env.pop(key, None)
+    return env
+
+
 def run(cmd, timeout=12):
     # EGPUBRIDGE_QUIET_PING_V0726
     # TV network probe must never flood plugin.log when Wi-Fi/TV is unavailable.
     try:
         if cmd and str(cmd[0]) == "/usr/bin/ping":
-            cp = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            cp = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=_system_subprocess_env(),
+            )
             return {
                 "ok": cp.returncode == 0,
                 "rc": cp.returncode,
@@ -362,6 +389,7 @@ def run(cmd, timeout=12):
             stderr=subprocess.PIPE,
             text=True,
             timeout=timeout,
+            env=_system_subprocess_env(),
         )
         out = (p.stdout or "").strip()
         err = (p.stderr or "").strip()
@@ -388,6 +416,26 @@ def run(cmd, timeout=12):
             "err": str(e),
             "cmd": cmd,
         }
+
+
+def _normalize_modetest_write_result(result):
+    """Treat modetest's textual write errors as failures even when it exits 0."""
+    normalized = dict(result or {})
+    output = "\n".join(
+        str(normalized.get(key) or "") for key in ("out", "err")
+    ).lower()
+    failure_markers = (
+        "failed to set",
+        "permission denied",
+        "operation not permitted",
+        "invalid argument",
+    )
+    reported_failure = any(marker in output for marker in failure_markers)
+    normalized["ok"] = normalized.get("rc") == 0 and not reported_failure
+    if reported_failure:
+        normalized["reported_failure"] = True
+        normalized.setdefault("error", "modetest reported that the connector write failed")
+    return normalized
 
 
 class _TimeoutError(Exception):
@@ -437,6 +485,7 @@ def _run(cmd: str, timeout: int = 30, sudo: bool = False):
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=_system_subprocess_env(),
         )
         out = (p.stdout or "").strip()
         if p.returncode != 0:
@@ -1297,10 +1346,10 @@ def internal_panel_off():
     steps.append(_safe_write_text(f"{fb_path}/blank", "1"))
     steps.append(_safe_write_text(f"{vtcon_path}/bind", "0"))
 
-    dpms = run(
+    dpms = _normalize_modetest_write_result(run(
         ["/usr/bin/modetest", "-M", detect_drm_driver(), "-D", f"/dev/dri/{card_name}", "-w", f"{cid}:DPMS:3"],
         timeout=8,
-    )
+    ))
     steps.append({"step": "dpms_off", "connector_id": cid, "result": dpms})
 
 
@@ -1313,7 +1362,7 @@ def internal_panel_off():
     }
 
     return {
-        "ok": dpms.get("rc") == 0,
+        "ok": dpms.get("ok", False),
         "action": "internal_panel_off",
         "connector": info,
         "steps": steps,
@@ -1340,10 +1389,10 @@ def internal_panel_on():
 
     steps = []
 
-    dpms = run(
+    dpms = _normalize_modetest_write_result(run(
         ["/usr/bin/modetest", "-M", detect_drm_driver(), "-D", f"/dev/dri/{card_name}", "-w", f"{cid}:DPMS:0"],
         timeout=8,
-    )
+    ))
     steps.append({"step": "dpms_on", "connector_id": cid, "result": dpms})
 
     steps.append(_safe_write_text(f"{vtcon_path}/bind", "1"))
@@ -1359,7 +1408,7 @@ def internal_panel_on():
     }
 
     return {
-        "ok": dpms.get("rc") == 0,
+        "ok": dpms.get("ok", False),
         "action": "internal_panel_on",
         "connector": info,
         "steps": steps,
@@ -1403,12 +1452,12 @@ def hdmi_panel_off():
                 log(f"HDMI_OFF: no PCI slot for {conn.name}")
                 continue
             log(f"HDMI_OFF: {conn.name} cid={cid} pci={pci_slot}")
-            dpms = run(
+            dpms = _normalize_modetest_write_result(run(
                 ["/usr/bin/modetest", "-D", f"pci:{pci_slot}", "-w", f"{cid}:DPMS:3"],
                 timeout=8,
-            )
+            ))
             log(f"HDMI_OFF DPMS result: rc={dpms.get('rc')}")
-            return {"ok": dpms.get("rc") == 0, "cid": cid, "pci": pci_slot}
+            return {"ok": dpms.get("ok", False), "cid": cid, "pci": pci_slot, "result": dpms}
     log("HDMI_OFF: no connected HDMI found")
     return {"ok": False, "error": "no connected HDMI"}
 
@@ -1439,15 +1488,15 @@ def hdmi_panel_on():
             _safe_write_text(str(status_file), "on")
         log(f"HDMI_ON: {conn.name} cid={cid} pci={pci_slot}")
         for attempt in range(5):
-            dpms = run(
+            dpms = _normalize_modetest_write_result(run(
                 ["/usr/bin/modetest", "-D", f"pci:{pci_slot}", "-w", f"{cid}:DPMS:0"],
                 timeout=8,
-            )
+            ))
             log(f"HDMI_ON DPMS attempt {attempt+1}: rc={dpms.get('rc')}")
-            if dpms.get("rc") == 0:
-                return {"ok": True, "cid": cid, "pci": pci_slot}
+            if dpms.get("ok"):
+                return {"ok": True, "cid": cid, "pci": pci_slot, "result": dpms}
             time.sleep(2)
-        return {"ok": False, "cid": cid, "pci": pci_slot}
+        return {"ok": False, "cid": cid, "pci": pci_slot, "result": dpms}
     log("HDMI_ON: no HDMI connector found")
     return {"ok": False, "error": "no HDMI connector"}
 

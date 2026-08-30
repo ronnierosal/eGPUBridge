@@ -47,6 +47,49 @@ class DisplayTargetTests(unittest.TestCase):
         )
 
 
+class SystemCommandTests(unittest.TestCase):
+    def test_system_commands_drop_decky_bundled_library_environment(self):
+        completed = mock.Mock(returncode=0, stdout="mesa 1.2.3\n", stderr="")
+        bundled_environment = {
+            "PATH": "/usr/bin",
+            "LD_LIBRARY_PATH": "/tmp/_MEI123",
+            "LD_PRELOAD": "/tmp/plugin.so",
+            "PYTHONHOME": "/tmp/python",
+            "PYTHONPATH": "/tmp/modules",
+        }
+        with mock.patch.dict(main.os.environ, bundled_environment, clear=True), mock.patch.object(
+            main.subprocess, "run", return_value=completed
+        ) as run_mock, mock.patch.object(main, "log"):
+            result = main.run(["pacman", "-Q", "mesa"])
+
+        self.assertTrue(result["ok"])
+        child_environment = run_mock.call_args.kwargs["env"]
+        self.assertEqual(child_environment["PATH"], "/usr/bin")
+        for key in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONHOME", "PYTHONPATH"):
+            self.assertNotIn(key, child_environment)
+
+    def test_modetest_textual_permission_failure_overrides_zero_exit_code(self):
+        result = main._normalize_modetest_write_result(
+            {
+                "ok": True,
+                "rc": 0,
+                "out": "opened device AMD GPU",
+                "err": "failed to set CONNECTOR 112 property DPMS to 3: Permission denied",
+            }
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["reported_failure"])
+
+    def test_modetest_clean_zero_exit_code_remains_successful(self):
+        result = main._normalize_modetest_write_result(
+            {"ok": True, "rc": 0, "out": "opened device AMD GPU", "err": ""}
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("reported_failure", result)
+
+
 class GamescopeEnvironmentTests(unittest.TestCase):
     def test_root_backend_updates_the_gamescope_users_systemd_manager(self):
         with mock.patch.object(

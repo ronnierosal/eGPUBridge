@@ -251,7 +251,7 @@ Relevant code: [`bin/gamescope`](../bin/gamescope)
 
 ### EGB-016 - Expand deterministic tests
 
-Status: In progress - deterministic coverage expanded from 7 to 24 tests
+Status: In progress - deterministic coverage expanded from 7 to 27 tests
 
 Add tests for exact device selection, topology-safe disconnect, transition-state
 recovery, reload idempotency, connector detection failures, tuning bounds,
@@ -319,6 +319,42 @@ Foundation completed on the feature branch:
 
 Relevant code: [`src/index.tsx`](../src/index.tsx)
 
+### EGB-019 - Separate the Decky runtime directory from legacy plugin state
+
+Status: Implemented and runtime discovery verified on ROG Ally X; deployment migration pending
+
+Decky can install a release into a versioned directory such as
+`eGPUBridge-v0.3.alfa` while the installed backend continues to store settings and
+logs under `eGPUBridge`. The first SSH harness treated the state directory as the
+runtime, so diagnostics missed `main.py` and deployment would have replaced the
+wrong tree. The harness now discovers the runtime by manifest name, captures both
+locations, and migrates configuration from the legacy state directory.
+
+Relevant code: [`scripts/ally-remote-test.ps1`](../scripts/ally-remote-test.ps1)
+
+### EGB-020 - Sanitize Decky's bundled library environment for system commands
+
+Status: Implemented with regression coverage; hardware validation pending
+
+Live diagnostics showed `pacman -Q mesa` loading a PyInstaller copy of
+`libssl.so.3` from `/tmp/_MEI*` and failing its SteamOS OpenSSL version check.
+System command runners now remove Decky/PyInstaller library and Python override
+variables while retaining the rest of the environment.
+
+Relevant code: [`main.py`](../main.py)
+
+### EGB-021 - Reject textual `modetest` write failures
+
+Status: Implemented with regression coverage; hardware validation pending
+
+On the Ally, `modetest` returned exit code zero while reporting that the internal
+connector DPMS write failed with `Permission denied`. The backend therefore marked
+the panel-off step successful even though the write failed. Connector writes now
+normalize known textual failures into an unsuccessful result and expose the
+underlying command result for diagnostics.
+
+Relevant code: [`main.py`](../main.py)
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.
@@ -334,7 +370,7 @@ Relevant code: [`src/index.tsx`](../src/index.tsx)
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Twenty-four deterministic tests and CI checks are passing locally.
+- Twenty-seven deterministic tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 

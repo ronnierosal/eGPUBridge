@@ -18,12 +18,16 @@ param(
     [ValidatePattern("^/[A-Za-z0-9._/-]+$")]
     [string]$RemotePluginDir = "",
 
+    [ValidatePattern("^/[A-Za-z0-9._/-]+$")]
+    [string]$RemoteStateDir = "",
+
     [ValidateRange(1, 120)]
     [int]$DurationMinutes = 15,
 
     [string]$OutputRoot = "",
 
     [switch]$IncludeSensitive,
+    [switch]$InteractiveSudo,
     [switch]$ConfirmDeploy
 )
 
@@ -31,8 +35,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RepositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-if ([string]::IsNullOrWhiteSpace($RemotePluginDir)) {
-    $RemotePluginDir = "/home/$UserName/homebrew/plugins/eGPUBridge"
+if ([string]::IsNullOrWhiteSpace($RemoteStateDir)) {
+    $RemoteStateDir = "/home/$UserName/homebrew/plugins/eGPUBridge"
 }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $RepositoryRoot "test-results"
@@ -61,14 +65,68 @@ if (-not [string]::IsNullOrWhiteSpace($IdentityFile)) {
 }
 
 function Invoke-RemoteScript {
-    param([Parameter(Mandatory = $true)][string]$Script)
+    param(
+        [Parameter(Mandatory = $true)][string]$Script,
+        [switch]$AsRoot,
+        [switch]$Interactive
+    )
 
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Script))
-    $remoteCommand = "printf '%s' '$encoded' | base64 -d | bash"
-    & ssh @SshArgs $Target $remoteCommand
+    $shellCommand = if ($AsRoot -and $Interactive) {
+        "sudo bash"
+    }
+    elseif ($AsRoot) {
+        "sudo -n bash"
+    }
+    else {
+        "bash"
+    }
+    $remoteCommand = "printf '%s' '$encoded' | base64 -d | $shellCommand"
+    $invokeSshArgs = @($SshArgs)
+    if ($Interactive) {
+        $invokeSshArgs += "-tt"
+    }
+    & ssh @invokeSshArgs $Target $remoteCommand
     if ($LASTEXITCODE -ne 0) {
         throw "Remote command failed with exit code $LASTEXITCODE."
     }
+}
+
+function Find-RemotePluginDirectory {
+    $pluginRoot = "/home/$UserName/homebrew/plugins"
+    $script = @"
+set +e
+PLUGIN_ROOT='$pluginRoot'
+for manifest in "`$PLUGIN_ROOT"/*/plugin.json; do
+    test -r "`$manifest" || continue
+    if python3 -c 'import json, sys; raise SystemExit(0 if json.load(open(sys.argv[1], encoding="utf-8")).get("name") == "eGPUBridge" else 1)' "`$manifest" 2>/dev/null; then
+        dirname "`$manifest"
+    fi
+done
+"@
+
+    $matches = @(
+        Invoke-RemoteScript -Script $script |
+            ForEach-Object { ([string]$_).Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+    )
+    if ($matches.Count -gt 1) {
+        throw "Multiple eGPUBridge runtime directories were found: $($matches -join ', '). Pass -RemotePluginDir explicitly."
+    }
+    if ($matches.Count -eq 0) {
+        return $RemoteStateDir
+    }
+
+    $resolved = $matches[0]
+    if ($resolved -notmatch '^/home/[A-Za-z_][A-Za-z0-9_-]*/homebrew/plugins/[A-Za-z0-9._-]+$') {
+        throw "The discovered plugin directory is not a safe Decky path: $resolved"
+    }
+    return $resolved
+}
+
+if ([string]::IsNullOrWhiteSpace($RemotePluginDir)) {
+    $RemotePluginDir = Find-RemotePluginDirectory
 }
 
 function Protect-DiagnosticFile {
@@ -110,7 +168,8 @@ function New-TestSession {
         started_at = (Get-Date).ToString("o")
         action = $Action
         target = if ($IncludeSensitive) { $Target } else { "<redacted>" }
-        remote_plugin_dir = if ($IncludeSensitive) { $RemotePluginDir } else { "/home/<redacted>/homebrew/plugins/eGPUBridge" }
+        remote_plugin_dir = if ($IncludeSensitive) { $RemotePluginDir } else { "/home/<redacted>/homebrew/plugins/$($RemotePluginDir.Split('/')[-1])" }
+        remote_state_dir = if ($IncludeSensitive) { $RemoteStateDir } else { "/home/<redacted>/homebrew/plugins/$($RemoteStateDir.Split('/')[-1])" }
         branch = $branch
         commit = $commit
         sensitive_identifiers_included = [bool]$IncludeSensitive
@@ -129,6 +188,7 @@ function Save-Snapshot {
     $script = @"
 set +e
 PLUGIN_DIR='$RemotePluginDir'
+STATE_DIR='$RemoteStateDir'
 echo '===== TIME ====='
 date --iso-8601=seconds
 echo '===== SYSTEM ====='
@@ -147,9 +207,19 @@ for status in /sys/class/drm/card*-*/status; do
 done
 echo '===== PLUGIN FILES ====='
 test -d "`$PLUGIN_DIR" && ls -ld "`$PLUGIN_DIR" || echo 'plugin directory missing'
+echo '===== PLUGIN STATE ====='
+test -d "`$STATE_DIR" && ls -ld "`$STATE_DIR" || echo 'plugin state directory missing'
 for file in output_order.conf prefer_vk_device.conf gamescope_mode.conf display_transition.json; do
     echo "--- `$file ---"
-    test -r "`$PLUGIN_DIR/`$file" && cat "`$PLUGIN_DIR/`$file" || echo 'missing'
+    if test -r "`$STATE_DIR/`$file"; then
+        echo "source=`$STATE_DIR/`$file"
+        cat "`$STATE_DIR/`$file"
+    elif test -r "`$PLUGIN_DIR/`$file"; then
+        echo "source=`$PLUGIN_DIR/`$file"
+        cat "`$PLUGIN_DIR/`$file"
+    else
+        echo 'missing'
+    fi
 done
 echo '===== REDACTED PLUGIN DIAGNOSTICS ====='
 if test -r "`$PLUGIN_DIR/main.py"; then
@@ -171,8 +241,13 @@ function Invoke-Preflight {
     $script = @"
 set +e
 PLUGIN_DIR='$RemotePluginDir'
+STATE_DIR='$RemoteStateDir'
 echo 'eGPUBridge remote-test preflight'
-echo "user=`$(id -un) uid=`$(id -u) host=`$(hostname)"
+HOST_NAME=`$(cat /etc/hostname 2>/dev/null)
+if test -z "`$HOST_NAME"; then
+    HOST_NAME=`$(uname -n 2>/dev/null)
+fi
+echo "user=`$(id -un) uid=`$(id -u) host=`$HOST_NAME"
 for tool in bash base64 python3 journalctl systemctl pgrep lspci; do
     if command -v "`$tool" >/dev/null 2>&1; then
         echo "OK tool `$tool"
@@ -180,17 +255,22 @@ for tool in bash base64 python3 journalctl systemctl pgrep lspci; do
         echo "MISSING tool `$tool"
     fi
 done
-if test -d "`$PLUGIN_DIR"; then
-    echo "OK plugin_dir `$PLUGIN_DIR"
+if test -r "`$PLUGIN_DIR/plugin.json" && test -r "`$PLUGIN_DIR/main.py"; then
+    echo "OK plugin_runtime_dir `$PLUGIN_DIR"
 else
-    echo "MISSING plugin_dir `$PLUGIN_DIR"
+    echo "MISSING plugin_runtime_files `$PLUGIN_DIR"
+fi
+if test -d "`$STATE_DIR"; then
+    echo "OK plugin_state_dir `$STATE_DIR"
+else
+    echo "NOTE plugin_state_dir missing `$STATE_DIR"
 fi
 echo "gamescope_target=`$(systemctl --user is-active gamescope-session.target 2>/dev/null || true)"
 pgrep -a gamescope 2>/dev/null || echo 'gamescope process not visible'
 if sudo -n true >/dev/null 2>&1; then
     echo 'OK passwordless_sudo'
 else
-    echo 'NOTE passwordless_sudo unavailable; automatic plugin_loader restart may need manual approval'
+    echo 'NOTE passwordless_sudo unavailable; deployment requires -InteractiveSudo in a visible terminal'
 fi
 "@
     Invoke-RemoteScript -Script $script | ForEach-Object { Write-Host $_ }
@@ -205,6 +285,7 @@ function Invoke-Capture {
     $script = @"
 set +e
 PLUGIN_DIR='$RemotePluginDir'
+STATE_DIR='$RemoteStateDir'
 DURATION='$seconds'
 echo "LIVE_CAPTURE_START `$(date --iso-8601=seconds) duration_seconds=`$DURATION"
 (
@@ -213,11 +294,18 @@ echo "LIVE_CAPTURE_START `$(date --iso-8601=seconds) duration_seconds=`$DURATION
     sed -u 's/^/[journal] /'
 ) &
 JOURNAL_PID=`$!
-if test -r "`$PLUGIN_DIR/plugin.log"; then
-  timeout --signal=INT "`$DURATION" tail -n 0 -F "`$PLUGIN_DIR/plugin.log" 2>&1 | sed -u 's/^/[plugin] /' &
+PLUGIN_LOGS=()
+for log_path in "`$PLUGIN_DIR/plugin.log" "`$STATE_DIR/plugin.log"; do
+  test -r "`$log_path" || continue
+  if test "`${#PLUGIN_LOGS[@]}" -eq 0 || test "`${PLUGIN_LOGS[0]}" != "`$log_path"; then
+    PLUGIN_LOGS+=("`$log_path")
+  fi
+done
+if test "`${#PLUGIN_LOGS[@]}" -gt 0; then
+  timeout --signal=INT "`$DURATION" tail -n 0 -F "`${PLUGIN_LOGS[@]}" 2>&1 | sed -u 's/^/[plugin] /' &
   PLUGIN_PID=`$!
 else
-  echo '[plugin] plugin.log is not readable'
+  echo '[plugin] no readable plugin.log found'
   PLUGIN_PID=''
 fi
 wait "`$JOURNAL_PID"
@@ -235,6 +323,14 @@ echo "LIVE_CAPTURE_END `$(date --iso-8601=seconds)"
 function Invoke-Deploy {
     if (-not $ConfirmDeploy) {
         throw "Deploy changes the plugin on the Ally. Re-run with -ConfirmDeploy after checking the target."
+    }
+    if (-not $InteractiveSudo) {
+        try {
+            Invoke-RemoteScript -Script "true" -AsRoot | Out-Null
+        }
+        catch {
+            throw "Deployment needs root access. Re-run in a visible terminal with -InteractiveSudo, or configure passwordless sudo for this operation."
+        }
     }
 
     Write-Host "Running local verification before deployment..."
@@ -261,6 +357,7 @@ function Invoke-Deploy {
         $script = @"
 set -Eeuo pipefail
 PLUGIN_DIR='$RemotePluginDir'
+STATE_DIR='$RemoteStateDir'
 ARCHIVE='$remoteArchive'
 STAMP='$stamp'
 PARENT=`$(dirname "`$PLUGIN_DIR")
@@ -278,20 +375,24 @@ if test -d "`$PLUGIN_DIR"; then mv "`$PLUGIN_DIR" "`$BACKUP"; fi
 mv "`$STAGING" "`$PLUGIN_DIR"
 if test -d "`$BACKUP"; then
   for file in output_order.conf prefer_vk_device.conf gamescope_mode.conf tv_control_automation.json hotkey_settings.json; do
-    test ! -f "`$BACKUP/`$file" || cp -p "`$BACKUP/`$file" "`$PLUGIN_DIR/`$file"
+    if test "`$STATE_DIR" != "`$PLUGIN_DIR" && test -f "`$STATE_DIR/`$file"; then
+      cp -p "`$STATE_DIR/`$file" "`$PLUGIN_DIR/`$file"
+    elif test -f "`$BACKUP/`$file"; then
+      cp -p "`$BACKUP/`$file" "`$PLUGIN_DIR/`$file"
+    fi
   done
 fi
 chmod +x "`$PLUGIN_DIR/bin/gamescope" "`$PLUGIN_DIR/bin/"*.sh 2>/dev/null || true
 rm -f "`$ARCHIVE"
 trap - ERR
 echo "DEPLOYED backup=`$BACKUP"
-if sudo -n systemctl restart plugin_loader.service; then
+if systemctl restart plugin_loader.service; then
   echo 'RESTARTED plugin_loader.service'
 else
   echo 'DEPLOYED but plugin_loader restart needs to be run manually'
 fi
 "@
-        Invoke-RemoteScript -Script $script | ForEach-Object { Write-Host $_ }
+        Invoke-RemoteScript -Script $script -AsRoot -Interactive:$InteractiveSudo | ForEach-Object { Write-Host $_ }
     }
     finally {
         Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue

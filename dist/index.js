@@ -2095,10 +2095,14 @@ function App(props) {
         className: "egb-title",
         style: { fontSize: "12px", fontWeight: "900", color: "rgba(245,248,255,.94)", marginBottom: "6px", lineHeight: "14px", borderTop: "1px solid rgba(160,190,245,.12)", paddingTop: "8px" }
     }, "Diagnostics"),
-    // Collect Diagnostics button
-    e(DFL.Focusable, {
-        className: "egpuProfileRow",
-        onActivate: function () {
+    // EGB-018 stage 2 start: read-only diagnostics use native Decky rows.
+    e(DFL.ButtonItem, {
+        label: "Collect Device Info",
+        description: "Create a redacted hardware and log summary",
+        layout: "inline",
+        childrenContainerWidth: "min",
+        disabled: diagLoading,
+        onClick: function () {
             if (diagLoading)
                 return;
             setDiagLoading(true);
@@ -2111,39 +2115,39 @@ function App(props) {
                 setLast({ ok: false, source: "diagnostics", error: String(err) });
             });
         }
-    }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Collect Device Info"), e("span", { style: { fontSize: "10px", fontWeight: "700", color: diagLoading ? "rgba(255,210,90,.90)" : "rgba(245,248,255,.50)" } }, diagLoading ? "Collecting..." : "Run"))),
+    }, diagLoading ? "Collecting..." : "Run"),
     // Diagnostics summary
-    diagnostics ? e("div", {
-        className: "egb-label",
-        style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)", padding: "0 6px 6px", lineHeight: "16px" }
-    }, e("div", null, "CPU: " + (diagnostics.cpu || "?")), e("div", null, "RAM: " + (diagnostics.ram || "?")), e("div", null, "GPU: " + (diagnostics.gpus ? diagnostics.gpus.length + " device(s)" : "?")), e("div", null, "ADB: " + (diagnostics.adb && diagnostics.adb.installed ? "Yes" : "No")), e("div", null, "Errors in log: " + (diagnostics.log_errors != null ? diagnostics.log_errors : "?")), e("div", null, "Warnings in log: " + (diagnostics.log_warnings != null ? diagnostics.log_warnings : "?"))) : null,
-    // TV Control Health button
-    e(DFL.Focusable, {
-        className: "egpuProfileRow",
-        onActivate: function () { doCall("tv_control_health", {}); call(serverApi, "tv_power_light", {}).then(function (res) { setTvPowerLight(res); }).catch(function () { }); }
-    }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "TV Control Health"), e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Check"))),
-    // Recent Events button
-    e(DFL.Focusable, {
-        className: "egpuProfileRow",
-        onActivate: function () { loadRecentEvents(); }
-    }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Recent Events"), e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Last 10 events"))),
-    // Debug Info toggle
-    e(DFL.Focusable, {
-        className: "egpuProfileRow",
-        onActivate: function () {
-            var next = !showDebug;
+    diagnostics ? e(DFL.Field, {
+        label: "Device summary",
+        childrenLayout: "below",
+        padding: "compact",
+        bottomSeparator: "none"
+    }, e("div", null, "CPU: " + (diagnostics.cpu || "?")), e("div", null, "RAM: " + (diagnostics.ram || "?")), e("div", null, "GPU: " + (diagnostics.gpus ? diagnostics.gpus.length + " device(s)" : "?")), e("div", null, "ADB: " + (diagnostics.adb && diagnostics.adb.installed ? "Yes" : "No")), e("div", null, "Errors in log: " + (diagnostics.log_errors != null ? diagnostics.log_errors : "?")), e("div", null, "Warnings in log: " + (diagnostics.log_warnings != null ? diagnostics.log_warnings : "?"))) : null, e(DFL.ButtonItem, {
+        label: "TV Control Health",
+        description: "Read current ADB and TV power-light status",
+        layout: "inline",
+        childrenContainerWidth: "min",
+        onClick: function () { doCall("tv_control_health", {}); call(serverApi, "tv_power_light", {}).then(function (res) { setTvPowerLight(res); }).catch(function () { }); }
+    }, "Check"), e(DFL.ButtonItem, {
+        label: "Recent Events",
+        description: "Load the last 10 redacted plugin events",
+        layout: "inline",
+        childrenContainerWidth: "min",
+        onClick: function () { loadRecentEvents(); }
+    }, "Load"),
+    // EGB-018 stage 2 end.
+    // EGB-018 stage 1: native focus, activation, and theme behavior.
+    e(DFL.ToggleField, {
+        label: "Debug Info",
+        description: "Show Gamescope and last-result details",
+        checked: showDebug,
+        highlightOnFocus: true,
+        bottomSeparator: "none",
+        onChange: function (next) {
             setShowDebug(next);
             setLast({ ok: true, marker: "FRONTEND_TOGGLE_DEBUG_INFO_81319_TEMPLATE", message: next ? "Debug info shown" : "Debug info hidden" });
         }
-    }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Debug Info"), e("span", {
-        onClick: function () {
-            var next = !showDebug;
-            setShowDebug(next);
-            setLast({ ok: true, marker: "FRONTEND_TOGGLE_DEBUG_INFO_81319_TEMPLATE", message: next ? "Debug info shown" : "Debug info hidden" });
-        },
-        className: "egb-toggle " + (showDebug ? "egb-toggle-on" : "egb-toggle-off"),
-        style: { width: "40px", height: "22px", borderRadius: "999px", padding: "2px", boxSizing: "border-box", display: "inline-flex", alignItems: "center", justifyContent: showDebug ? "flex-end" : "flex-start", flex: "0 0 auto", cursor: "pointer", background: showDebug ? "rgba(80,255,150,.28)" : "rgba(255,255,255,.12)", border: showDebug ? "1px solid rgba(80,255,150,.70)" : "1px solid rgba(255,255,255,.22)", boxShadow: showDebug ? "0 0 7px rgba(80,255,150,.18)" : "none" }
-    }, e("span", { style: { width: "16px", height: "16px", borderRadius: "999px", display: "block", background: showDebug ? "rgba(130,255,180,.98)" : "rgba(230,235,245,.78)", boxShadow: showDebug ? "0 0 8px rgba(80,255,150,.65)" : "0 1px 4px rgba(0,0,0,.35)" } }))))) : null, // end showOtherAccordion wrapper
+    })) : null, // end showOtherAccordion wrapper
     eventLog ? SP_REACT.createElement(DFL.PanelSection, { title: "Recent events" }, SP_REACT.createElement(DFL.PanelSectionRow, null, Pre({ obj: eventLog, maxHeight: "260px" }))) : null, showDebug ? SP_REACT.createElement(DFL.PanelSection, { title: "Gamescope" }, SP_REACT.createElement(DFL.PanelSectionRow, null, Pre({ obj: gamescope || "no gamescope data", maxHeight: "120px" }))) : null, showDebug ? SP_REACT.createElement(DFL.PanelSection, { title: "Last result" }, SP_REACT.createElement(DFL.PanelSectionRow, null, Pre({ obj: last || "no action yet", maxHeight: "180px" }))) : null);
 }
 if (!SP_REACT || !SP_REACT.createElement) {

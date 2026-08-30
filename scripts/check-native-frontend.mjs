@@ -42,6 +42,18 @@ if (source.includes('"ASMedia 246x \\u00b7 "')) {
 if (source.includes("toaster.toast")) {
   failures.push("Display handoff still depends on a toast that failed Ally visual validation");
 }
+if (!source.includes("EGB-018 stage 1: native focus, activation, and theme behavior") ||
+    !source.includes('label: "Debug Info"') ||
+    !source.includes("e(ToggleField")) {
+  failures.push("EGB-018 stage 1 must keep Debug Info on Decky's native ToggleField");
+}
+const diagnosticsStage = source.match(/EGB-018 stage 2 start:([\s\S]*?)EGB-018 stage 2 end\./);
+if (!diagnosticsStage ||
+    (diagnosticsStage[1].match(/e\(ButtonItem/g) || []).length !== 3 ||
+    !diagnosticsStage[1].includes("e(Field") ||
+    diagnosticsStage[1].includes("e(Focusable")) {
+  failures.push("EGB-018 stage 2 diagnostics must use three ButtonItems and one Field");
+}
 
 if (failures.length) {
   for (const failure of failures) console.error(`ERROR: ${failure}`);

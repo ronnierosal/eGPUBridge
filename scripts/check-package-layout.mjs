@@ -15,6 +15,7 @@ const required = [
   "bin/platform-tools/NOTICE.txt",
   "docs/REMOTE_TESTING.md",
   "docs/THIRD_PARTY.md",
+  "docs/CROSS_PLATFORM_PARITY.md",
   "LICENSE",
   "README.md",
 ];

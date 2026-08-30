@@ -14,6 +14,15 @@ This fork focuses first on AMD handhelds and AMD USB4 eGPUs, especially the ASUS
 connector names, and propagates `MESA_VK_DEVICE_SELECT` to the user systemd manager that
 launches Gamescope.
 
+## Related project and feature parity
+
+- [eGPUBridge for Windows](https://github.com/ronnierosal/eGPUBridge-Windows)
+- [Shared cross-platform feature contract](docs/CROSS_PLATFORM_PARITY.md)
+
+The projects share product behavior, terminology, safety rules, diagnostics, and
+feature planning. Their native display and session implementations remain
+platform-specific.
+
 ## Features
 
 - **SMART Display Switch** — one-tap toggle between internal and external display

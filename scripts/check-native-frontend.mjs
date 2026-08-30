@@ -42,6 +42,11 @@ if (source.includes('"ASMedia 246x \\u00b7 "')) {
 if (source.includes("toaster.toast")) {
   failures.push("Display handoff still depends on a toast that failed Ally visual validation");
 }
+if (!source.includes("EGB-018 stage 1: native focus, activation, and theme behavior") ||
+    !source.includes('label: "Debug Info"') ||
+    !source.includes("e(ToggleField")) {
+  failures.push("EGB-018 stage 1 must keep Debug Info on Decky's native ToggleField");
+}
 
 if (failures.length) {
   for (const failure of failures) console.error(`ERROR: ${failure}`);

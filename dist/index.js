@@ -2127,23 +2127,18 @@ function App(props) {
         className: "egpuProfileRow",
         onActivate: function () { loadRecentEvents(); }
     }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Recent Events"), e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Last 10 events"))),
-    // Debug Info toggle
-    e(DFL.Focusable, {
-        className: "egpuProfileRow",
-        onActivate: function () {
-            var next = !showDebug;
+    // EGB-018 stage 1: native focus, activation, and theme behavior.
+    e(DFL.ToggleField, {
+        label: "Debug Info",
+        description: "Show Gamescope and last-result details",
+        checked: showDebug,
+        highlightOnFocus: true,
+        bottomSeparator: "none",
+        onChange: function (next) {
             setShowDebug(next);
             setLast({ ok: true, marker: "FRONTEND_TOGGLE_DEBUG_INFO_81319_TEMPLATE", message: next ? "Debug info shown" : "Debug info hidden" });
         }
-    }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Debug Info"), e("span", {
-        onClick: function () {
-            var next = !showDebug;
-            setShowDebug(next);
-            setLast({ ok: true, marker: "FRONTEND_TOGGLE_DEBUG_INFO_81319_TEMPLATE", message: next ? "Debug info shown" : "Debug info hidden" });
-        },
-        className: "egb-toggle " + (showDebug ? "egb-toggle-on" : "egb-toggle-off"),
-        style: { width: "40px", height: "22px", borderRadius: "999px", padding: "2px", boxSizing: "border-box", display: "inline-flex", alignItems: "center", justifyContent: showDebug ? "flex-end" : "flex-start", flex: "0 0 auto", cursor: "pointer", background: showDebug ? "rgba(80,255,150,.28)" : "rgba(255,255,255,.12)", border: showDebug ? "1px solid rgba(80,255,150,.70)" : "1px solid rgba(255,255,255,.22)", boxShadow: showDebug ? "0 0 7px rgba(80,255,150,.18)" : "none" }
-    }, e("span", { style: { width: "16px", height: "16px", borderRadius: "999px", display: "block", background: showDebug ? "rgba(130,255,180,.98)" : "rgba(230,235,245,.78)", boxShadow: showDebug ? "0 0 8px rgba(80,255,150,.65)" : "0 1px 4px rgba(0,0,0,.35)" } }))))) : null, // end showOtherAccordion wrapper
+    })) : null, // end showOtherAccordion wrapper
     eventLog ? SP_REACT.createElement(DFL.PanelSection, { title: "Recent events" }, SP_REACT.createElement(DFL.PanelSectionRow, null, Pre({ obj: eventLog, maxHeight: "260px" }))) : null, showDebug ? SP_REACT.createElement(DFL.PanelSection, { title: "Gamescope" }, SP_REACT.createElement(DFL.PanelSectionRow, null, Pre({ obj: gamescope || "no gamescope data", maxHeight: "120px" }))) : null, showDebug ? SP_REACT.createElement(DFL.PanelSection, { title: "Last result" }, SP_REACT.createElement(DFL.PanelSectionRow, null, Pre({ obj: last || "no action yet", maxHeight: "180px" }))) : null);
 }
 if (!SP_REACT || !SP_REACT.createElement) {

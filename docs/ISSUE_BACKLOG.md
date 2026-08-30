@@ -355,6 +355,19 @@ underlying command result for diagnostics.
 
 Relevant code: [`main.py`](../main.py)
 
+### EGB-022 - Keep deployment backups outside Decky's plugin scan directory
+
+Status: Implemented after live deployment validation
+
+Decky treats every immediate child directory containing a plugin manifest as a
+loadable plugin. The first transactional deployment left its timestamped backup
+beside the active runtime, causing Decky to load both copies under the same plugin
+name and route calls to the old API contract. Deployments now store backups under
+`homebrew/plugin-backups/eGPUBridge`, and runtime discovery ignores legacy backup
+or staging directory names.
+
+Relevant code: [`scripts/ally-remote-test.ps1`](../scripts/ally-remote-test.ps1)
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.

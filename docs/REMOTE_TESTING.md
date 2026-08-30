@@ -55,6 +55,8 @@ installs the new tree, and attempts to restart Decky. If
 passwordless `sudo` is unavailable, run the command in a visible terminal with
 `-InteractiveSudo` and enter the SteamOS password at its prompt. Without that
 switch, deployment fails before upload instead of leaving a partial installation.
+Backups are stored under `/home/<username>/homebrew/plugin-backups/eGPUBridge/`,
+outside Decky's live plugin scan directory.
 
 ## Planned hardware sequence
 

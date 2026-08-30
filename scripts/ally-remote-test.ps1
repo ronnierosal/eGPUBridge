@@ -99,6 +99,10 @@ set +e
 PLUGIN_ROOT='$pluginRoot'
 for manifest in "`$PLUGIN_ROOT"/*/plugin.json; do
     test -r "`$manifest" || continue
+    runtime_name=`$(basename "`$(dirname "`$manifest")")
+    case "`$runtime_name" in
+        *.backup-*|*.staging-*) continue ;;
+    esac
     if python3 -c 'import json, sys; raise SystemExit(0 if json.load(open(sys.argv[1], encoding="utf-8")).get("name") == "eGPUBridge" else 1)' "`$manifest" 2>/dev/null; then
         dirname "`$manifest"
     fi
@@ -376,13 +380,15 @@ STATE_DIR='$RemoteStateDir'
 ARCHIVE='$remoteArchive'
 STAMP='$stamp'
 PARENT=`$(dirname "`$PLUGIN_DIR")
+BACKUP_ROOT=`$(dirname "`$PARENT")/plugin-backups/eGPUBridge
 STAGING="`$PLUGIN_DIR.staging-`$STAMP"
-BACKUP="`$PLUGIN_DIR.backup-`$STAMP"
+BACKUP="`$BACKUP_ROOT/`$(basename "`$PLUGIN_DIR").backup-`$STAMP"
 rollback() {
   if test ! -d "`$PLUGIN_DIR" && test -d "`$BACKUP"; then mv "`$BACKUP" "`$PLUGIN_DIR"; fi
 }
 trap rollback ERR
 mkdir -p "`$PARENT"
+mkdir -p "`$BACKUP_ROOT"
 rm -rf "`$STAGING"
 mkdir "`$STAGING"
 tar -xzf "`$ARCHIVE" -C "`$STAGING"

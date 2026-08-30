@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import base64
 import zlib
+import ipaddress
 from pathlib import Path
 from urllib.parse import quote
 
@@ -2598,6 +2599,52 @@ def make_encoded_report(obj) -> str:
     return "EGBR1." + b64
 
 
+_DIAGNOSTIC_REDACTED = "<redacted>"
+_DIAGNOSTIC_IPV4_RE = re.compile(r"(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9.])")
+_DIAGNOSTIC_MAC_RE = re.compile(r"(?i)(?<![0-9a-f])(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}(?![0-9a-f])")
+_DIAGNOSTIC_HOME_RE = re.compile(r"(?i)(?<![\w.-])/home/[^/\s]+")
+
+
+def _redact_diagnostic_text(value, hostname=""):
+    """Redact local identifiers from diagnostic text while preserving hardware data."""
+    text = str(value)
+
+    def redact_ipv4(match):
+        candidate = match.group(0)
+        try:
+            ipaddress.ip_address(candidate)
+        except ValueError:
+            return candidate
+        return _DIAGNOSTIC_REDACTED
+
+    text = _DIAGNOSTIC_IPV4_RE.sub(redact_ipv4, text)
+    text = _DIAGNOSTIC_MAC_RE.sub(_DIAGNOSTIC_REDACTED, text)
+    text = _DIAGNOSTIC_HOME_RE.sub("/home/<redacted>", text)
+    if hostname:
+        text = re.sub(re.escape(str(hostname)), _DIAGNOSTIC_REDACTED, text, flags=re.IGNORECASE)
+    return text
+
+
+def redact_diagnostic_payload(value, hostname=""):
+    """Recursively sanitize a report before it is returned or encoded for sharing."""
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            normalized = str(key).lower()
+            if normalized == "hostname":
+                redacted[key] = _DIAGNOSTIC_REDACTED
+            else:
+                redacted[key] = redact_diagnostic_payload(item, hostname=hostname)
+        return redacted
+    if isinstance(value, list):
+        return [redact_diagnostic_payload(item, hostname=hostname) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_diagnostic_payload(item, hostname=hostname) for item in value)
+    if isinstance(value, str):
+        return _redact_diagnostic_text(value, hostname=hostname)
+    return value
+
+
 def make_qr_utf8(payload: str) -> dict:
     q = run(["/usr/bin/qrencode", "-t", "UTF8"], timeout=8)
     # run() cannot pass stdin, so use subprocess directly here.
@@ -2620,7 +2667,7 @@ def make_qr_utf8(payload: str) -> dict:
         return {"ok": False, "rc": -1, "qr": "", "err": str(e)}
 
 
-def build_support_report():
+def build_support_report(include_sensitive=False):
     status = build_status(heavy=True)
 
     journal = run(
@@ -2659,6 +2706,15 @@ def build_support_report():
         "gamescope_session_block": report["gamescope_session_block"],
     }
 
+    if not include_sensitive:
+        hostname = ""
+        try:
+            hostname = os.uname().nodename
+        except Exception:
+            pass
+        report = redact_diagnostic_payload(report, hostname=hostname)
+        compact = redact_diagnostic_payload(compact, hostname=hostname)
+
     encoded = make_encoded_report(compact)
     qr = make_qr_utf8(encoded)
 
@@ -2671,6 +2727,7 @@ def build_support_report():
         "qr_ok": qr.get("ok"),
         "qr_error": qr.get("err"),
         "qr_utf8": qr.get("qr", ""),
+        "redacted": not include_sensitive,
         "hint": "Send encoded_report to ChatGPT. It is zlib+base64url, prefix EGBR1.",
     }
 
@@ -4380,6 +4437,11 @@ class Plugin:
 
         # Keep the newest useful lines.
         lines = lines[-80:]
+        try:
+            hostname = os.uname().nodename
+        except Exception:
+            hostname = ""
+        lines = redact_diagnostic_payload(lines, hostname=hostname)
 
         return {
             "ok": res.get("rc") == 0,
@@ -4929,8 +4991,8 @@ def check_tv_online(ip=None):
 
 
 # === DIAGNOSTICS ===
-def collect_diagnostics():
-    """Collect system diagnostics for troubleshooting."""
+def collect_diagnostics(include_sensitive=False):
+    """Collect diagnostics, redacting local identifiers unless explicitly requested."""
     info = {
         "ok": True,
         "source": "diagnostics",
@@ -5025,6 +5087,13 @@ def collect_diagnostics():
     except Exception:
         pass
 
+    if include_sensitive:
+        info["redacted"] = False
+        return info
+
+    hostname = str(info.get("hostname") or "")
+    info = redact_diagnostic_payload(info, hostname=hostname)
+    info["redacted"] = True
     return info
 
 

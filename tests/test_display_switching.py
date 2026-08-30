@@ -3,6 +3,8 @@ import tempfile
 import inspect
 import json
 import re
+import base64
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -381,6 +383,108 @@ class DeckyApiContractTests(unittest.TestCase):
                 signature.bind({})
 
         inspect.signature(plugin.recent_events).bind(10)
+
+
+class DiagnosticRedactionTests(unittest.TestCase):
+    def test_recursive_redaction_preserves_hardware_identity(self):
+        payload = {
+            "hostname": "ally-livingroom",
+            "tv": {"ip": "192.168.50.22", "mac": "AA:BB:CC:DD:EE:FF"},
+            "log": "ally-livingroom connected from /home/ronnie at 10.0.0.8",
+            "gpu": "65:00.0 VGA compatible controller: AMD Device 7480",
+        }
+
+        result = main.redact_diagnostic_payload(payload, hostname="ally-livingroom")
+        serialized = json.dumps(result)
+
+        self.assertNotIn("ally-livingroom", serialized)
+        self.assertNotIn("192.168.50.22", serialized)
+        self.assertNotIn("AA:BB:CC:DD:EE:FF", serialized)
+        self.assertNotIn("/home/ronnie", serialized)
+        self.assertIn("65:00.0", serialized)
+        self.assertIn("7480", serialized)
+
+    def test_collect_diagnostics_redacts_by_default_and_allows_explicit_local_capture(self):
+        fake_uname = mock.Mock(nodename="ally-livingroom", release="6.12.1-test")
+        command_result = mock.Mock(returncode=0, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "plugin.log"
+            log_path.write_text(
+                "TV 192.168.50.22 at AA:BB:CC:DD:EE:FF user /home/ronnie on ally-livingroom\n"
+            )
+            with mock.patch.object(main.os, "uname", return_value=fake_uname, create=True), mock.patch(
+                "builtins.open", mock.mock_open(read_data="model name : Test CPU\nMemTotal: 1024 kB\n")
+            ), mock.patch.object(main.subprocess, "run", return_value=command_result), mock.patch.object(
+                main, "LOG_PATH", log_path
+            ), mock.patch.object(
+                main, "adb_status", return_value={"path": "/home/ronnie/plugin/bin/adb"}
+            ), mock.patch.object(
+                main,
+                "_read_tv_conf",
+                return_value={"TV_IP": "192.168.50.22", "TV_MAC": "AA:BB:CC:DD:EE:FF"},
+            ):
+                safe = main.collect_diagnostics()
+                sensitive = main.collect_diagnostics(include_sensitive=True)
+
+        safe_text = json.dumps(safe)
+        sensitive_text = json.dumps(sensitive)
+        self.assertTrue(safe["redacted"])
+        self.assertNotIn("ally-livingroom", safe_text)
+        self.assertNotIn("192.168.50.22", safe_text)
+        self.assertNotIn("AA:BB:CC:DD:EE:FF", safe_text)
+        self.assertNotIn("/home/ronnie", safe_text)
+        self.assertFalse(sensitive["redacted"])
+        self.assertIn("192.168.50.22", sensitive_text)
+
+    def test_encoded_support_report_contains_only_redacted_payload(self):
+        status_payload = {
+            "connected": True,
+            "egpu": {"pci": "65:00.0", "tv_ip": "192.168.50.22"},
+            "gamescope": "ally-livingroom /home/ronnie",
+        }
+        fake_uname = mock.Mock(nodename="ally-livingroom")
+        with mock.patch.object(main, "build_status", return_value=status_payload), mock.patch.object(
+            main, "gamescope_session_block", return_value="connect 192.168.50.22"
+        ), mock.patch.object(
+            main, "tail_text", return_value="AA:BB:CC:DD:EE:FF /home/ronnie"
+        ), mock.patch.object(
+            main,
+            "run",
+            return_value={"ok": True, "rc": 0, "out": "host ally-livingroom", "err": ""},
+        ), mock.patch.object(
+            main, "make_qr_utf8", return_value={"ok": True, "err": "", "qr": ""}
+        ), mock.patch.object(main.os, "uname", return_value=fake_uname, create=True):
+            result = main.build_support_report()
+
+        encoded = result["encoded_report"].split(".", 1)[1]
+        encoded += "=" * (-len(encoded) % 4)
+        compact = json.loads(zlib.decompress(base64.urlsafe_b64decode(encoded)))
+        serialized = json.dumps({"report": result["report"], "compact": compact})
+        self.assertTrue(result["redacted"])
+        self.assertNotIn("ally-livingroom", serialized)
+        self.assertNotIn("192.168.50.22", serialized)
+        self.assertNotIn("AA:BB:CC:DD:EE:FF", serialized)
+        self.assertNotIn("/home/ronnie", serialized)
+        self.assertIn("65:00.0", serialized)
+
+
+class RecentEventRedactionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recent_events_are_redacted_before_rpc_return(self):
+        journal = (
+            "Aug 30 ally-livingroom eGPUBridge: TV 192.168.50.22 "
+            "AA:BB:CC:DD:EE:FF /home/ronnie connected\n"
+        )
+        fake_uname = mock.Mock(nodename="ally-livingroom")
+        with mock.patch.object(
+            main, "run", return_value={"ok": True, "rc": 0, "out": journal, "err": "", "cmd": []}
+        ), mock.patch.object(main.os, "uname", return_value=fake_uname, create=True):
+            result = await main.Plugin().recent_events(10)
+
+        serialized = json.dumps(result)
+        self.assertNotIn("ally-livingroom", serialized)
+        self.assertNotIn("192.168.50.22", serialized)
+        self.assertNotIn("AA:BB:CC:DD:EE:FF", serialized)
+        self.assertNotIn("/home/ronnie", serialized)
 
 
 if __name__ == "__main__":

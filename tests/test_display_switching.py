@@ -243,6 +243,66 @@ class ApplyModeTests(unittest.IsolatedAsyncioTestCase):
         integration_mock.assert_not_called()
         config_mock.assert_not_called()
 
+    async def test_native_handoff_returns_before_scheduled_restart(self):
+        detected = {
+            "egpu": {
+                "card": "card1",
+                "pci": "0000:65:00.0",
+                "vendor": "0x1002",
+                "device": "0x7480",
+            },
+            "recommended_connector": {"name": "HDMI-A-2", "status": "connected"},
+            "gamescope": "420 gamescope -O *,eDP-1 -e",
+        }
+        transition = {"id": "transition-1", "status": "pending", "target": "external"}
+        with mock.patch.object(main, "build_status", return_value=detected), mock.patch.object(
+            main, "_running_steam_games", return_value={"ok": True, "games": [], "count": 0}
+        ), mock.patch.object(
+            main, "ensure_gamescope_integration", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "write_gamescope_wrapper_config", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "update_gamescope_user_environment", return_value={"ok": True, "steps": []}
+        ), mock.patch.object(
+            main, "_write_display_transition", return_value=transition
+        ), mock.patch.object(
+            main,
+            "_schedule_display_restart",
+            return_value={"ok": True, "accepted": True, "transition_id": "transition-1"},
+        ) as schedule_mock, mock.patch.object(main, "_apply_restart_sync") as restart_mock:
+            result = await main.Plugin.apply_egpu_mode(restart=True, async_handoff=True)
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["transition"]["id"], "transition-1")
+        schedule_mock.assert_called_once()
+        restart_mock.assert_not_called()
+
+
+class NativeHandoffWrapperTests(unittest.IsolatedAsyncioTestCase):
+    async def test_deferred_internal_handoff_does_not_delay_rpc_for_tv_power(self):
+        accepted = {"ok": True, "accepted": True, "transition": {"id": "transition-2"}}
+        with mock.patch.object(
+            main,
+            "_egb_81103_call_old",
+            new=mock.AsyncMock(return_value=accepted),
+        ), mock.patch.object(
+            main,
+            "_egb_81103_maybe_tv_off_after_internal",
+            new=mock.AsyncMock(),
+        ) as tv_off_mock:
+            result = await main._egb_81103_restore_internal_mode(
+                restart=True,
+                async_handoff=True,
+            )
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(
+            result["wifi_tv_auto_tv_off"]["reason"],
+            "deferred-display-transition",
+        )
+        tv_off_mock.assert_not_awaited()
+
 
 class GamescopeDesiredStateTests(unittest.TestCase):
     def test_external_state_requires_both_output_and_exact_gpu(self):

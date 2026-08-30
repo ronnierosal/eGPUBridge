@@ -8,6 +8,7 @@ import subprocess
 import base64
 import zlib
 import ipaddress
+import threading
 from pathlib import Path
 from urllib.parse import quote
 
@@ -3799,6 +3800,47 @@ def _restore_restart_sync(desired: dict, transition: dict):
     return restart
 
 
+_display_restart_jobs = {}
+_display_restart_jobs_lock = threading.Lock()
+
+
+def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: float = 1.0) -> dict:
+    """Schedule a restart after Decky has had time to return the accepted RPC."""
+    transition_id = str((transition or {}).get("id") or "")
+    if not transition_id:
+        return {"ok": False, "error": "Display transition has no operation ID"}
+
+    def run_scheduled_restart():
+        try:
+            log(f"DISPLAY_TRANSITION scheduled start id={transition_id}")
+            worker(desired, transition)
+        except Exception as e:
+            log(f"DISPLAY_TRANSITION scheduled failure id={transition_id}: {e}")
+            _finish_display_transition(
+                transition,
+                "failed",
+                {"error": f"Scheduled Game Mode restart failed: {e}"},
+            )
+        finally:
+            with _display_restart_jobs_lock:
+                _display_restart_jobs.pop(transition_id, None)
+
+    with _display_restart_jobs_lock:
+        if any(job.is_alive() for job in _display_restart_jobs.values()):
+            return {"ok": False, "error": "Another display restart is already scheduled"}
+        timer = threading.Timer(max(0.25, float(delay_s)), run_scheduled_restart)
+        timer.daemon = True
+        _display_restart_jobs[transition_id] = timer
+        timer.start()
+
+    return {
+        "ok": True,
+        "accepted": True,
+        "transition_id": transition_id,
+        "delay_seconds": max(0.25, float(delay_s)),
+    }
+
+
 class Plugin:
     async def _main(self):
         log(f"init v{VERSION}")
@@ -4086,6 +4128,7 @@ class Plugin:
     @staticmethod
     async def apply_egpu_mode(*args, **kwargs):
         restart = _decky_bool(args, kwargs, "restart", False)
+        async_handoff = _decky_bool(args, kwargs, "async_handoff", False)
         allow_running_game = _decky_bool(args, kwargs, "allow_running_game", False)
         explicit_mode_request = any(_decky_call_value(args, kwargs, k, None) is not None for k in ("width", "height", "refresh"))
         width = _decky_int(args, kwargs, "width", DEFAULT_WIDTH)
@@ -4203,6 +4246,20 @@ class Plugin:
                 result["restart_reason"] = "requested display state is already active"
             else:
                 transition = _write_display_transition("external", desired)
+                if async_handoff:
+                    scheduled = _schedule_display_restart(_apply_restart_sync, desired, transition)
+                    result["restart_scheduled"] = scheduled
+                    result["transition"] = transition
+                    result["accepted"] = bool(scheduled.get("ok"))
+                    result["ok"] = bool(scheduled.get("ok"))
+                    if not result["ok"]:
+                        result["error"] = scheduled.get("error") or "Could not schedule Game Mode restart"
+                        result["transition"] = _finish_display_transition(
+                            transition,
+                            "failed",
+                            {"error": result["error"]},
+                        )
+                    return result
                 import asyncio
                 loop = asyncio.get_event_loop()
                 restart_result = await loop.run_in_executor(None, _apply_restart_sync, desired, transition)
@@ -4219,6 +4276,7 @@ class Plugin:
     async def restore_internal_mode(*args, **kwargs):
         restart_value = _decky_call_value(args, kwargs, "restart", False)
         restart = _decky_bool(args, kwargs, "restart", False)
+        async_handoff = _decky_bool(args, kwargs, "async_handoff", False)
         allow_running_game = _decky_bool(args, kwargs, "allow_running_game", False)
         log(f"UI_CALL restore_internal_mode restart={restart}")
         """
@@ -4228,6 +4286,7 @@ class Plugin:
         sleep_after_restore = str(restart_value).lower() in ("sleep", "suspend", "prepare_sleep", "prepare-sleep")
         if sleep_after_restore:
             restart = True
+            async_handoff = False
         restart_requested = bool(restart)
 
         desired = {
@@ -4295,6 +4354,20 @@ class Plugin:
                 result["restart_reason"] = "requested display state is already active"
             else:
                 transition = _write_display_transition("internal", desired)
+                if async_handoff:
+                    scheduled = _schedule_display_restart(_restore_restart_sync, desired, transition)
+                    result["restart_scheduled"] = scheduled
+                    result["transition"] = transition
+                    result["accepted"] = bool(scheduled.get("ok"))
+                    result["ok"] = bool(scheduled.get("ok"))
+                    if not result["ok"]:
+                        result["error"] = scheduled.get("error") or "Could not schedule Game Mode restart"
+                        result["transition"] = _finish_display_transition(
+                            transition,
+                            "failed",
+                            {"error": result["error"]},
+                        )
+                    return result
                 import asyncio
                 loop = asyncio.get_event_loop()
                 restart_result = await loop.run_in_executor(None, _restore_restart_sync, desired, transition)
@@ -4333,6 +4406,7 @@ class Plugin:
             return {"ok": False, "error": "Operation already in progress: " + str(_operation_lock)}
         try:
             restart = _decky_bool(args, kwargs, "restart", True)
+            async_handoff = _decky_bool(args, kwargs, "async_handoff", False)
             log(f"UI_CALL smart_toggle_display restart={restart}")
             """
             Smart Toggle Display.
@@ -4370,13 +4444,23 @@ class Plugin:
 
             if external_active:
                 result["to_display"] = "internal"
-                switch_result = await Plugin.restore_internal_mode(restart=restart)
+                switch_result = await Plugin.restore_internal_mode(
+                    restart=restart,
+                    async_handoff=async_handoff,
+                )
             else:
                 result["to_display"] = "external"
-                switch_result = await Plugin.apply_egpu_mode(restart=restart)
+                switch_result = await Plugin.apply_egpu_mode(
+                    restart=restart,
+                    async_handoff=async_handoff,
+                )
 
             result["switch_result"] = switch_result
             result["ok"] = bool(isinstance(switch_result, dict) and switch_result.get("ok"))
+            if isinstance(switch_result, dict) and switch_result.get("accepted"):
+                result["accepted"] = True
+                result["transition"] = switch_result.get("transition")
+                return result
 
             after = build_status(heavy=False)
             result["after"] = {
@@ -5688,7 +5772,14 @@ async def _egb_81103_tv_input_mode(*args, **kwargs):
 
 async def _egb_81103_restore_internal_mode(*args, **kwargs):
     res = await _egb_81103_call_old(_egb_81103_old_restore_internal_mode, *args, **kwargs)
-    off = await _egb_81103_maybe_tv_off_after_internal("restore_internal_mode")
+    if isinstance(res, dict) and res.get("accepted"):
+        off = {
+            "ok": True,
+            "skipped": True,
+            "reason": "deferred-display-transition",
+        }
+    else:
+        off = await _egb_81103_maybe_tv_off_after_internal("restore_internal_mode")
 
     try:
         if isinstance(res, dict):

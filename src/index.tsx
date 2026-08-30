@@ -9,12 +9,15 @@ import {
   PanelSection,
   PanelSectionRow,
 } from "@decky/ui";
-import { definePlugin } from "@decky/api";
+import { definePlugin, toaster, useQuickAccessVisible } from "@decky/api";
 import { callBackend } from "./backend";
 
 // The backend also fails closed. Keep the dangerous controls out of the active
 // UI until their hardware-specific safety checks are implemented and tested.
 const UNSAFE_HARDWARE_CONTROLS_ENABLED = false;
+const useDeckyQuickAccessVisible = typeof useQuickAccessVisible === "function"
+  ? useQuickAccessVisible
+  : function() { return true; };
 
 function call(_serverApi, method, args) {
   return callBackend(method, args || {});
@@ -1234,6 +1237,7 @@ function App(props) {
   // Kept as a placeholder until the remaining legacy call sites are converted
   // to direct typed helpers; transport is handled by @decky/api in backend.ts.
   var serverApi = null;
+  var quickAccessVisible = useDeckyQuickAccessVisible();
   var statusState = React.useState(null);
   var status = statusState[0];
   var setStatus = statusState[1];
@@ -1459,7 +1463,21 @@ function App(props) {
     setBusy(true);
     call(serverApi, method, args || {}).then(function(res) {
       setLast(res);
-        absorbUiResult(method, res);
+      absorbUiResult(method, res);
+      var accepted = !!(res && (res.accepted || (res.switch_result && res.switch_result.accepted)));
+      if (accepted) {
+        var transition = res.transition || (res.switch_result && res.switch_result.transition) || {};
+        if (toaster && typeof toaster.toast === "function") {
+          toaster.toast({
+            title: "eGPUBridge",
+            body: transition.target === "internal" ? "Returning to the Ally display" : "Switching to the eGPU display",
+            subtext: "Game Mode is restarting. The plugin will reconnect automatically.",
+            duration: 5000,
+            showToast: true,
+          });
+        }
+        return null;
+      }
       return call(serverApi, "status", {});
     }).then(function(st) {
       if (st) setStatus(st);
@@ -1620,8 +1638,9 @@ function App(props) {
     }
 
   React.useEffect(function() {
+    if (!quickAccessVisible) return;
     refresh(false);
-      loadUiSideStatus(true);
+    loadUiSideStatus(true);
 
     var timer = setInterval(function() {
       refresh(true);
@@ -1630,7 +1649,7 @@ function App(props) {
     return function() {
       clearInterval(timer);
     };
-  }, []);
+  }, [quickAccessVisible]);
 
   // Load ADB status and TV IP on mount
   React.useEffect(function() {
@@ -2328,7 +2347,7 @@ function App(props) {
                 disabled: busy || !egpu,
                 onClick: function() {
                   setLast({ ok: true, marker: "FRONTEND_CLICK_SMART", message: "Diagnostics: SMART frontend click reached React handler" });
-                  doCall("smart_toggle_display", { restart: true });
+                  doCall("smart_toggle_display", { restart: true, async_handoff: true });
                 },
                 style: {
                   width: "100%",
@@ -3834,7 +3853,7 @@ function App(props) {
         // Restore Internal button
         e(Focusable, {
           className: "egpuProfileRow",
-          onActivate: function() { doCall("restore_internal_mode", { restart: true }); }
+          onActivate: function() { doCall("restore_internal_mode", { restart: true, async_handoff: true }); }
         },
           e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } },
             e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Restore Internal"),
@@ -3859,7 +3878,7 @@ function App(props) {
           onActivate: function() {
             setSelectedMode({ width: 1920, height: 1080, refresh: 60, label: "1920x1080 @ 60Hz" });
             setShowModeList(false);
-            doCall("apply_egpu_mode", { restart: true, width: 1920, height: 1080, refresh: 60 });
+            doCall("apply_egpu_mode", { restart: true, async_handoff: true, width: 1920, height: 1080, refresh: 60 });
           }
         },
           e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } },

@@ -40,7 +40,7 @@ Acceptance criteria:
 ### EGB-002 - Make the Game Mode reload transactional and event-driven
 
 Status: Partially implemented; external/internal round trip passed hardware validation,
-asynchronous RPC handoff remains pending
+asynchronous Decky RPC handoff implemented and awaiting hardware validation
 
 The demo video shows that selecting the external screen restarts the Game Mode
 session. This is not a device reboot: the plugin calls
@@ -50,16 +50,21 @@ when changing Gamescope startup arguments such as `-O` and
 when a Steam game is running, records a durable transition, and replaces the
 fixed six-second sleep with bounded new-PID and exact-argument verification.
 
-The remaining work is to acknowledge and schedule the restart without keeping
-the Decky RPC open while its own UI is torn down, validate the returning Decky UI
-on hardware, and add automatic internal-state rollback when a transition cannot
-be reconciled after startup.
+The native handoff now writes the transition, returns an accepted operation ID,
+shows a Decky notification, and schedules the restart in the backend after the
+RPC response. The frontend stops polling while Quick Access is closed and reads
+the durable transition through normal status refresh after remount. Remaining
+work is to validate that the websocket result is no longer dropped on hardware
+and add automatic internal-state rollback when a transition cannot be reconciled
+after startup. TV-off automation is deliberately skipped during the immediate
+handoff so it cannot delay the RPC; a post-transition automation job remains a
+follow-up for users who enable that optional setting.
 
-The 2026-08-30 hardware pass confirmed this remaining RPC issue: the switch
+The 2026-08-30 hardware pass confirmed the original RPC issue: the switch
 completed and the returning UI worked, but Decky's websocket router logged that
 it dropped the successful RPC result because the restart had already disconnected
-the calling socket. The user-visible transition is functional; asynchronous
-acknowledgement is still needed to make the handoff clean and observable.
+the calling socket. The next hardware pass must prove the new scheduled handoff
+makes this transition clean and observable.
 
 Relevant code:
 
@@ -323,6 +328,10 @@ Foundation completed on the feature branch:
   plugin instance in deterministic tests.
 - CI type-checks, rebuilds, detects generated-output drift, and verifies the
   frontend/backend route contract.
+- Decky's native Quick Access visibility hook pauses status polling while the
+  panel is closed.
+- Display switches can return a durable accepted transition before a scheduled
+  Gamescope restart, with a native Decky toast explaining the reconnect.
 
 Relevant code: [`src/index.tsx`](../src/index.tsx)
 

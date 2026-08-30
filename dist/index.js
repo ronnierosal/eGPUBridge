@@ -16,6 +16,8 @@ if (api._version != API_VERSION) {
     console.warn(`[@decky/api] Requested API version ${API_VERSION} but the running loader only supports version ${api._version}. Some features may not work.`);
 }
 const callable = api.callable;
+const toaster = api.toaster;
+const useQuickAccessVisible = api.useQuickAccessVisible;
 const definePlugin = (fn) => {
     return (...args) => {
         return fn(...args);
@@ -75,6 +77,9 @@ function callBackend(route, args = {}) {
 // eGPUBridge v0.3.alfa - gamepad friendly frontend using Decky/Steam ButtonItem. WAGON_UI_SKELETON_90004 ROUTE_STATUS_WAGON_90101 GPU_PROFILES_WAGON_UI_90202R1 GPU_WAGON_STATE_9020302 GPU_POLISH_TVCHECK_9020303 AMD_CAPABILITY_UI_90302R1 GPU_POLICY_UI_90304 GPU_ACTIONS_UI_90402R1 GPU_PROFILE_UI_90501B UI_SHELL_GPU_BEFORE_RECOVERY_90602R2 UI_SHELL_RENAME_GPU_CENTER_9060302 UI_SHELL_REPAIR_GPU_CENTER_BOUNDARIES_9060304R1 UI_SHELL_REMOVED_DUPLICATE_TV_CHECK_9060305 UI_GPU_HEADERS_90702
 // @ts-nocheck
 
+const useDeckyQuickAccessVisible = typeof useQuickAccessVisible === "function"
+    ? useQuickAccessVisible
+    : function () { return true; };
 function call(_serverApi, method, args) {
     return callBackend(method, args || {});
 }
@@ -524,6 +529,7 @@ function App(props) {
     // Kept as a placeholder until the remaining legacy call sites are converted
     // to direct typed helpers; transport is handled by @decky/api in backend.ts.
     var serverApi = null;
+    var quickAccessVisible = useDeckyQuickAccessVisible();
     var statusState = SP_REACT.useState(null);
     var status = statusState[0];
     var setStatus = statusState[1];
@@ -705,6 +711,20 @@ function App(props) {
         call(serverApi, method, args || {}).then(function (res) {
             setLast(res);
             absorbUiResult(method, res);
+            var accepted = !!(res && (res.accepted || (res.switch_result && res.switch_result.accepted)));
+            if (accepted) {
+                var transition = res.transition || (res.switch_result && res.switch_result.transition) || {};
+                if (toaster && typeof toaster.toast === "function") {
+                    toaster.toast({
+                        title: "eGPUBridge",
+                        body: transition.target === "internal" ? "Returning to the Ally display" : "Switching to the eGPU display",
+                        subtext: "Game Mode is restarting. The plugin will reconnect automatically.",
+                        duration: 5000,
+                        showToast: true,
+                    });
+                }
+                return null;
+            }
             return call(serverApi, "status", {});
         }).then(function (st) {
             if (st)
@@ -795,6 +815,8 @@ function App(props) {
         });
     }
     SP_REACT.useEffect(function () {
+        if (!quickAccessVisible)
+            return;
         refresh(false);
         loadUiSideStatus();
         var timer = setInterval(function () {
@@ -803,7 +825,7 @@ function App(props) {
         return function () {
             clearInterval(timer);
         };
-    }, []);
+    }, [quickAccessVisible]);
     // Load ADB status and TV IP on mount
     SP_REACT.useEffect(function () {
         call(serverApi, "adb_status", {}).then(function (res) { setAdbStatus(res); }).catch(function () { });
@@ -1093,7 +1115,7 @@ function App(props) {
         disabled: busy || !egpu,
         onClick: function () {
             setLast({ ok: true, marker: "FRONTEND_CLICK_SMART", message: "Diagnostics: SMART frontend click reached React handler" });
-            doCall("smart_toggle_display", { restart: true });
+            doCall("smart_toggle_display", { restart: true, async_handoff: true });
         },
         style: {
             width: "100%",
@@ -1926,7 +1948,7 @@ function App(props) {
     // Restore Internal button
     e(DFL.Focusable, {
         className: "egpuProfileRow",
-        onActivate: function () { doCall("restore_internal_mode", { restart: true }); }
+        onActivate: function () { doCall("restore_internal_mode", { restart: true, async_handoff: true }); }
     }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Restore Internal"), e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Force iGPU"))),
     // Reapply TV Mode button
     e(DFL.Focusable, {
@@ -1939,7 +1961,7 @@ function App(props) {
         onActivate: function () {
             setSelectedMode({ width: 1920, height: 1080, refresh: 60, label: "1920x1080 @ 60Hz" });
             setShowModeList(false);
-            doCall("apply_egpu_mode", { restart: true, width: 1920, height: 1080, refresh: 60 });
+            doCall("apply_egpu_mode", { restart: true, async_handoff: true, width: 1920, height: 1080, refresh: 60 });
         }
     }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Fallback 1080p60"), e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Safe mode"))),
     // Section: Diagnostics

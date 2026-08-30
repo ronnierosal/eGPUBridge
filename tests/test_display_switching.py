@@ -24,6 +24,14 @@ class RemoteHarnessTests(unittest.TestCase):
         self.assertIn(state_fallback, snapshot)
         self.assertLess(snapshot.index(runtime_check), snapshot.index(state_fallback))
 
+    def test_deployment_stages_outside_decky_plugin_scan_directory(self):
+        harness = (Path(__file__).parents[1] / "scripts" / "ally-remote-test.ps1").read_text()
+        deploy_start = harness.index("function Invoke-Deploy")
+        deploy = harness[deploy_start:]
+
+        self.assertIn('STAGING="`$BACKUP_ROOT/.staging-`$STAMP"', deploy)
+        self.assertNotIn('STAGING="`$PLUGIN_DIR.staging-`$STAMP"', deploy)
+
 
 def status(*, connector="HDMI-A-1", output_order="", gamescope=""):
     return {

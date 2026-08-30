@@ -503,6 +503,18 @@ Acceptance criteria:
 - Test game-specific outcomes separately and record whether the game continued,
   recovered through relaunch, or could not be preserved.
 
+### EGB-030 - Keep deployment staging outside Decky's plugin scan tree
+
+Status: Implemented after native phase-2 deployment 2026-08-30
+
+Although backups were already outside the live plugin directory, deployment
+still unpacked its staging directory beside the active runtime. Decky's watcher
+attempted to load that directory before `plugin.json` had been extracted and
+logged repeated missing-manifest tracebacks. Staging now occurs under the external
+backup root, is cleaned on failure, and is atomically moved into the live plugin
+directory only after extraction completes. A harness regression test locks the
+staging location.
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.

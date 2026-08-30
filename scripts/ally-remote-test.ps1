@@ -381,12 +381,16 @@ ARCHIVE='$remoteArchive'
 STAMP='$stamp'
 PARENT=`$(dirname "`$PLUGIN_DIR")
 BACKUP_ROOT=`$(dirname "`$PARENT")/plugin-backups/eGPUBridge
-STAGING="`$PLUGIN_DIR.staging-`$STAMP"
+STAGING="`$BACKUP_ROOT/.staging-`$STAMP"
 BACKUP="`$BACKUP_ROOT/`$(basename "`$PLUGIN_DIR").backup-`$STAMP"
 rollback() {
   if test ! -d "`$PLUGIN_DIR" && test -d "`$BACKUP"; then mv "`$BACKUP" "`$PLUGIN_DIR"; fi
 }
-trap rollback ERR
+cleanup() {
+  rm -rf -- "`$STAGING"
+  rm -f -- "`$ARCHIVE"
+}
+trap 'rollback; cleanup' ERR
 mkdir -p "`$PARENT"
 mkdir -p "`$BACKUP_ROOT"
 rm -rf "`$STAGING"

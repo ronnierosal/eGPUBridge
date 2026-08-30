@@ -558,6 +558,13 @@ function App(props) {
         };
         return function () { delete window.__egpuToggleTvMode; };
     }, []);
+    // Expose the read-only readiness check to the title-bar eject icon.
+    SP_REACT.useEffect(function () {
+        window.__egpuShowDisconnectReadiness = function () {
+            showDisconnectReadiness();
+        };
+        return function () { delete window.__egpuShowDisconnectReadiness; };
+    }, []);
     SP_REACT.useState(false);
     // UI_SKETCH_ACCORDION_DASHBOARD_91007R4
     var egpuAccordionState = SP_REACT.useState(false);
@@ -742,6 +749,33 @@ function App(props) {
                 doCall(method, Object.assign({}, args || {}, { async_handoff: true }));
             },
         }, e("div", { style: { fontSize: "14px", lineHeight: "20px" } }, e("p", { style: { margin: "0 0 10px" } }, "Before continuing, set the TV to the HDMI input connected to the GPD G1."), e("p", { style: { margin: "0" } }, "The Ally screen will go dark while Game Mode restarts. eGPUBridge will reconnect automatically when the new display session is ready."))), window, { strTitle: "eGPUBridge", bNeverPopOut: true });
+    }
+    function showDisconnectReadiness() {
+        setBusy(true);
+        call(serverApi, "safe_disconnect_readiness", {}).then(function (res) {
+            setLast(res);
+            var blockers = res && Array.isArray(res.blockers) ? res.blockers : [];
+            var identity = res && res.identity ? res.identity : null;
+            var modalHandle = null;
+            function closeModal() {
+                if (modalHandle && typeof modalHandle.Close === "function")
+                    modalHandle.Close();
+            }
+            modalHandle = DFL.showModal(SP_REACT.createElement(DFL.ConfirmModal, {
+                strTitle: res && res.ready ? "Ready to disconnect" : "Disconnect blocked",
+                strOKButtonText: "Close",
+                bHideCancelButton: true,
+                bDisableBackgroundDismiss: false,
+                onOK: closeModal,
+                onCancel: closeModal,
+            }, e("div", { style: { fontSize: "13px", lineHeight: "18px" } }, identity ? e("p", { style: { margin: "0 0 8px", fontWeight: "700" } }, (identity.description || "External GPU") + " · " + (identity.pci || "unknown PCI")) : null, blockers.length ? e("div", { style: { margin: "0 0 8px" } }, blockers.map(function (blocker, index) {
+                return e("div", { key: blocker.code || index, style: { marginBottom: "5px" } }, "• " + (blocker.message || blocker.code || "Readiness check failed"));
+            })) : e("p", { style: { margin: "0 0 8px" } }, "No blockers were reported."), e("p", { style: { margin: "0", color: "rgba(255,210,90,.95)", fontWeight: "700" } }, "Read-only check: no hardware was disconnected."))), window, { strTitle: "eGPUBridge", bNeverPopOut: true });
+        }).catch(function (err) {
+            setLast({ ok: false, source: "safe_disconnect_readiness", error: String(err) });
+        }).finally(function () {
+            setBusy(false);
+        });
     }
     // GPU_TUNING_LOAD
     function loadGpuTuning(force) {
@@ -1965,13 +1999,13 @@ function App(props) {
         },
         style: { width: "40px", height: "22px", borderRadius: "999px", padding: "2px", boxSizing: "border-box", display: "inline-flex", alignItems: "center", justifyContent: hotkeysEnabled ? "flex-end" : "flex-start", flex: "0 0 auto", cursor: "pointer", background: hotkeysEnabled ? "rgba(80,255,150,.28)" : "rgba(255,255,255,.12)", border: hotkeysEnabled ? "1px solid rgba(80,255,150,.70)" : "1px solid rgba(255,255,255,.22)", boxShadow: hotkeysEnabled ? "0 0 7px rgba(80,255,150,.18)" : "none" }
     }, e("span", { style: { width: "16px", height: "16px", borderRadius: "999px", display: "block", background: hotkeysEnabled ? "rgba(130,255,180,.98)" : "rgba(230,235,245,.78)", boxShadow: hotkeysEnabled ? "0 0 8px rgba(80,255,150,.65)" : "0 1px 4px rgba(0,0,0,.35)" } })))),
-    // Safe Unplug button
+    // Read-only disconnect readiness report
     e(DFL.Focusable, {
         className: "egpuProfileRow",
         onActivate: function () {
-            setLast({ ok: false, disabled: true, error: "Safe Unplug is disabled until USB4 storage and topology checks are implemented." });
+            showDisconnectReadiness();
         }
-    }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Safe Unplug"), e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(255,210,90,.70)" } }, "Disabled for safety"))),
+    }, e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } }, e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Disconnect Check"), e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(255,210,90,.70)" } }, "Read-only"))),
     // Restore Internal button
     e(DFL.Focusable, {
         className: "egpuProfileRow",
@@ -2079,10 +2113,9 @@ function createPlugin() {
             fill: "none", stroke: "currentColor",
             strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round"
         }, e("rect", { x: "2", y: "3", width: "15", height: "11", rx: "1.5" }), e("line", { x1: "6", y1: "18", x2: "13", y2: "18" }), e("line", { x1: "9.5", y1: "14", x2: "9.5", y2: "18" }), e("circle", { cx: "18.5", cy: "16.5", r: "2.5", strokeWidth: "1.5" }), e("line", { x1: "18.5", y1: "14", x2: "18.5", y2: "13.5", strokeWidth: "1.3" }), e("line", { x1: "18.5", y1: "19.5", x2: "18.5", y2: "19", strokeWidth: "1.3" }), e("line", { x1: "16", y1: "16.5", x2: "15.5", y2: "16.5", strokeWidth: "1.3" }), e("line", { x1: "21.5", y1: "16.5", x2: "21", y2: "16.5", strokeWidth: "1.3" }))),
-        // Safe Disconnect eGPU button — classic eject icon
+        // Read-only disconnect readiness button — classic eject icon
         SP_REACT.createElement(DFL.DialogButton, {
-            onOKActionDescription: "Safe Disconnect eGPU",
-            disabled: true,
+            onOKActionDescription: "Check eGPU disconnect readiness",
             style: {
                 height: "28px",
                 width: "40px",
@@ -2094,6 +2127,9 @@ function createPlugin() {
                 alignItems: "center"
             },
             onClick: function () {
+                if (typeof window.__egpuShowDisconnectReadiness === "function") {
+                    window.__egpuShowDisconnectReadiness();
+                }
             }
         }, e("svg", {
             width: "16", height: "16", viewBox: "0 0 24 24",

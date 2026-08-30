@@ -1277,6 +1277,14 @@ function App(props) {
     return function() { delete window.__egpuToggleTvMode; };
   }, []);
 
+  // Expose the read-only readiness check to the title-bar eject icon.
+  React.useEffect(function() {
+    window.__egpuShowDisconnectReadiness = function() {
+      showDisconnectReadiness();
+    };
+    return function() { delete window.__egpuShowDisconnectReadiness; };
+  }, []);
+
   var tvControlState = React.useState(false);
   var showTvControl = tvControlState[0];
   var setShowTvControl = tvControlState[1];
@@ -1512,6 +1520,53 @@ function App(props) {
       window,
       { strTitle: "eGPUBridge", bNeverPopOut: true }
     );
+  }
+
+  function showDisconnectReadiness() {
+    setBusy(true);
+    call(serverApi, "safe_disconnect_readiness", {}).then(function(res) {
+      setLast(res);
+      var blockers = res && Array.isArray(res.blockers) ? res.blockers : [];
+      var identity = res && res.identity ? res.identity : null;
+      var modalHandle = null;
+      function closeModal() {
+        if (modalHandle && typeof modalHandle.Close === "function") modalHandle.Close();
+      }
+      modalHandle = showModal(
+        React.createElement(
+          ConfirmModal,
+          {
+            strTitle: res && res.ready ? "Ready to disconnect" : "Disconnect blocked",
+            strOKButtonText: "Close",
+            bHideCancelButton: true,
+            bDisableBackgroundDismiss: false,
+            onOK: closeModal,
+            onCancel: closeModal,
+          },
+          e("div", { style: { fontSize: "13px", lineHeight: "18px" } },
+            identity ? e("p", { style: { margin: "0 0 8px", fontWeight: "700" } },
+              (identity.description || "External GPU") + " · " + (identity.pci || "unknown PCI")
+            ) : null,
+            blockers.length ? e("div", { style: { margin: "0 0 8px" } },
+              blockers.map(function(blocker, index) {
+                return e("div", { key: blocker.code || index, style: { marginBottom: "5px" } },
+                  "• " + (blocker.message || blocker.code || "Readiness check failed")
+                );
+              })
+            ) : e("p", { style: { margin: "0 0 8px" } }, "No blockers were reported."),
+            e("p", { style: { margin: "0", color: "rgba(255,210,90,.95)", fontWeight: "700" } },
+              "Read-only check: no hardware was disconnected."
+            )
+          )
+        ),
+        window,
+        { strTitle: "eGPUBridge", bNeverPopOut: true }
+      );
+    }).catch(function(err) {
+      setLast({ ok: false, source: "safe_disconnect_readiness", error: String(err) });
+    }).finally(function() {
+      setBusy(false);
+    });
   }
 
 
@@ -3900,16 +3955,16 @@ function App(props) {
           )
         ),
 
-        // Safe Unplug button
+        // Read-only disconnect readiness report
         e(Focusable, {
           className: "egpuProfileRow",
           onActivate: function() {
-            setLast({ ok: false, disabled: true, error: "Safe Unplug is disabled until USB4 storage and topology checks are implemented." });
+            showDisconnectReadiness();
           }
         },
           e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } },
-            e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Safe Unplug"),
-            e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(255,210,90,.70)" } }, "Disabled for safety")
+            e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Disconnect Check"),
+            e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(255,210,90,.70)" } }, "Read-only")
           )
         ),
 
@@ -4109,12 +4164,11 @@ function createPlugin() {
           e("line", { x1: "21.5", y1: "16.5", x2: "21", y2: "16.5", strokeWidth: "1.3" })
         )
       ),
-      // Safe Disconnect eGPU button — classic eject icon
+      // Read-only disconnect readiness button — classic eject icon
       React.createElement(
         DialogButton,
         {
-          onOKActionDescription: "Safe Disconnect eGPU",
-          disabled: !UNSAFE_HARDWARE_CONTROLS_ENABLED,
+          onOKActionDescription: "Check eGPU disconnect readiness",
           style: {
             height: "28px",
             width: "40px",
@@ -4126,7 +4180,9 @@ function createPlugin() {
             alignItems: "center"
           },
           onClick: function() {
-            if (UNSAFE_HARDWARE_CONTROLS_ENABLED) doCall("safe_disconnect", {});
+            if (typeof window.__egpuShowDisconnectReadiness === "function") {
+              window.__egpuShowDisconnectReadiness();
+            }
           }
         },
         e("svg", {

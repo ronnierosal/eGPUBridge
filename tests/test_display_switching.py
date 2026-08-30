@@ -736,6 +736,15 @@ class SafetyGateTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(result["disabled"])
             self.assertEqual(result["error_code"], "feature_disabled_for_safety")
 
+    async def test_frontend_replaces_dead_disconnect_control_with_readiness_report(self):
+        frontend = (Path(__file__).parents[1] / "src" / "index.tsx").read_text(encoding="utf-8")
+
+        self.assertIn('window.__egpuShowDisconnectReadiness', frontend)
+        self.assertIn('call(serverApi, "safe_disconnect_readiness", {})', frontend)
+        self.assertIn('"Disconnect Check"', frontend)
+        self.assertIn('"Read-only check: no hardware was disconnected."', frontend)
+        self.assertNotIn('onOKActionDescription: "Safe Disconnect eGPU"', frontend)
+
 
 class SafeDisconnectReadinessTests(unittest.TestCase):
     def _egpu(self, pci="0000:08:00.0", card="card1"):

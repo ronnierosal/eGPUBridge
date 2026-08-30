@@ -136,6 +136,9 @@ Current safe foundation:
 - It deliberately reports `ready: false` until the common USB4 tunnel and all
   sibling PCI, USB, block, filesystem, and mount dependencies can be proven.
 - The legacy destructive paths remain disabled in both the UI and backend.
+- The misleading disabled eject control is replaced by a read-only Disconnect
+  Check. Both the title-bar icon and Recovery / Safety row show the same visible
+  blocker report and explicitly confirm that no hardware was disconnected.
 
 ## P1 - privileged hardware controls
 

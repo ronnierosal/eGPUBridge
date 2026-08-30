@@ -80,7 +80,7 @@ Status meanings:
 | EGB-C08 | Exact GPD G1 identity | Planned | Planned | Bind behavior to PCI/device/topology identity, never “first secondary GPU.” |
 | EGB-C09 | Hot-plug arrival/removal events | Partial | Planned | Record device events; do not auto-switch until manual flow is reliable. |
 | EGB-C10 | Structured troubleshooting logs | Available* | Available* | Use the shared event names below and retain platform-native evidence. |
-| EGB-C11 | Redacted support export | Available* | Planned | Redact local user, host, network, and device-serial identifiers by default. |
+| EGB-C11 | Redacted support export | Available* | Available* | Redact local user, host, network, and device-serial identifiers by default. |
 | EGB-C12 | Remote supervised testing | Available* | Planned | Permit another computer to capture logs without installing Codex on the handheld. |
 | EGB-C13 | Saved per-setup profiles | Planned | Planned | Key profiles to exact adapter plus display identity and verify after applying. |
 | EGB-C14 | Opt-in automatic switching | Partial | Planned | Require a reliable manual flow, explicit enablement, debounce, and rollback first. |
@@ -154,4 +154,3 @@ implementations mature at different rates.
 6. Add saved profiles and hot-plug event logging.
 7. Consider opt-in automation and TV integration.
 8. Revisit safe disconnect and tuning only after their safety prerequisites exist.
-

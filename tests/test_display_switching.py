@@ -72,6 +72,21 @@ class RemoteHarnessTests(unittest.TestCase):
             harness,
         )
 
+    def test_live_capture_preserves_raw_aer_evidence_and_summarizes_the_console(self):
+        harness = (Path(__file__).parents[1] / "scripts" / "ally-remote-test.ps1").read_text()
+        capture_start = harness.index("function Invoke-Capture")
+        deploy_start = harness.index("function Invoke-Deploy", capture_start)
+        capture = harness[capture_start:deploy_start]
+
+        self.assertIn("Tee-Object -FilePath $capturePath", capture)
+        self.assertIn("Write-CaptureConsoleLine", capture)
+        self.assertLess(
+            capture.index("Tee-Object -FilePath $capturePath"),
+            capture.index("Write-CaptureConsoleLine"),
+        )
+        self.assertIn("main.collect_pcie_link_health()", capture)
+        self.assertIn("full records remain in live.txt", harness)
+
 
 def status(*, connector="HDMI-A-1", output_order="", gamescope=""):
     return {
@@ -1408,6 +1423,92 @@ class DeckyApiContractTests(unittest.TestCase):
                 signature.bind({})
 
         inspect.signature(plugin.recent_events).bind(10)
+
+
+class PcieLinkHealthTests(unittest.TestCase):
+    SAMPLE = """
+pcieport 0000:00:03.1: AER: Correctable error message received from 0000:05:01.0
+pcieport 0000:05:01.0: PCIe Bus Error: severity=Correctable, type=Data Link Layer, (Receiver ID)
+pcieport 0000:05:01.0:    [ 7] BadDLLP
+pcieport 0000:00:03.1: AER: Uncorrectable (Non-Fatal) error message received from 0000:05:02.0
+pcieport 0000:05:02.0: PCIe Bus Error: severity=Uncorrectable (Non-Fatal), type=Transaction Layer, (Receiver ID)
+pcieport 0000:05:02.0:    [21] ACSViol (First)
+xhci_hcd 0000:09:00.0: AER: can't recover (no error_detected callback)
+pcieport 0000:05:02.0: AER: device recovery failed
+"""
+
+    def test_summary_counts_canonical_events_without_double_counting_aer_headers(self):
+        summary = main.summarize_pcie_link_health(
+            self.SAMPLE,
+            window_minutes=15,
+            g1_pci_functions=["0000:05:01.0", "0000:05:02.0", "0000:09:00.0"],
+        )
+
+        self.assertEqual(summary["status"], "degraded")
+        self.assertEqual(summary["total_aer_events"], 2)
+        self.assertEqual(summary["severity_counts"]["correctable"], 1)
+        self.assertEqual(summary["severity_counts"]["uncorrectable_non_fatal"], 1)
+        self.assertEqual(summary["error_counts"], {"ACSViol": 1, "BadDLLP": 1})
+        self.assertEqual(summary["cannot_recover"], 1)
+        self.assertEqual(summary["recovery_failures"], 1)
+        self.assertEqual(summary["g1_related_records"], 4)
+        self.assertEqual(
+            [item["pci"] for item in summary["affected_devices"]],
+            ["0000:05:01.0", "0000:05:02.0", "0000:09:00.0"],
+        )
+
+    def test_empty_kernel_window_reports_healthy(self):
+        summary = main.summarize_pcie_link_health("unrelated kernel message", window_minutes=10)
+
+        self.assertEqual(summary["status"], "healthy")
+        self.assertEqual(summary["total_aer_events"], 0)
+        self.assertEqual(summary["affected_devices"], [])
+        self.assertIn("last 10 minutes", summary["headline"])
+
+    def test_collector_marks_validated_g1_topology_and_uses_read_only_journal_query(self):
+        topology = {
+            "complete": True,
+            "profile": "gpd-g1-rx7600mxt-titan-ridge",
+            "root_pci": "0000:04:00.0",
+            "pci_functions": [
+                {"pci": "0000:05:01.0"},
+                {"pci": "0000:05:02.0"},
+                {"pci": "0000:09:00.0"},
+            ],
+        }
+        with mock.patch.object(
+            main, "run", return_value={"rc": 0, "out": self.SAMPLE, "err": ""}
+        ) as run_mock, mock.patch.object(
+            main, "_read_egpu_identity", return_value={"pci": "0000:08:00.0"}
+        ), mock.patch.object(
+            main, "_pci_inventory", return_value=[{"pci": "0000:08:00.0"}]
+        ), mock.patch.object(
+            main, "_analyze_gpd_g1_topology", return_value=topology
+        ):
+            result = main.collect_pcie_link_health(15)
+
+        command = run_mock.call_args.args[0]
+        self.assertEqual(command[:3], ["/usr/bin/journalctl", "-k", "-b"])
+        self.assertNotIn("sudo", command)
+        self.assertTrue(result["g1_topology"]["matched"])
+        self.assertEqual(result["g1_topology"]["root_pci"], "0000:04:00.0")
+        self.assertEqual(result["g1_related_records"], 4)
+
+    def test_collector_fails_closed_when_kernel_journal_is_unavailable(self):
+        with mock.patch.object(
+            main, "run", return_value={"rc": 1, "out": "", "err": "permission denied"}
+        ):
+            result = main.collect_pcie_link_health()
+
+        self.assertFalse(result["available"])
+        self.assertEqual(result["status"], "unknown")
+        self.assertIn("permission denied", result["error"])
+
+    def test_frontend_shows_the_compact_link_health_headline(self):
+        frontend = (Path(__file__).parents[1] / "src" / "index.tsx").read_text(encoding="utf-8")
+
+        self.assertIn('"PCIe link: "', frontend)
+        self.assertIn("diagnostics.pcie_link_health.headline", frontend)
 
 
 class DiagnosticRedactionTests(unittest.TestCase):

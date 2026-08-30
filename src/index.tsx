@@ -4122,6 +4122,11 @@ function App(props) {
           e("div", null, "RAM: " + (diagnostics.ram || "?")),
           e("div", null, "GPU: " + (diagnostics.gpus ? diagnostics.gpus.length + " device(s)" : "?")),
           e("div", null, "ADB: " + (diagnostics.adb && diagnostics.adb.installed ? "Yes" : "No")),
+          e("div", null, "PCIe link: " + (
+            diagnostics.pcie_link_health && diagnostics.pcie_link_health.headline
+              ? diagnostics.pcie_link_health.headline
+              : "Unknown"
+          )),
           e("div", null, "Errors in log: " + (diagnostics.log_errors != null ? diagnostics.log_errors : "?")),
           e("div", null, "Warnings in log: " + (diagnostics.log_warnings != null ? diagnostics.log_warnings : "?"))
         ) : null,

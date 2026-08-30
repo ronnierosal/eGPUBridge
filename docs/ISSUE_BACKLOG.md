@@ -446,7 +446,7 @@ Relevant code: [`scripts/ally-remote-test.ps1`](../scripts/ally-remote-test.ps1)
 
 ### EGB-023 - Detect and summarize unstable USB4/PCIe links
 
-Status: Open - reproduced on ROG Ally X/GPD G1 hardware 2026-08-30
+Status: Diagnostics implemented; cable/port comparison remains open
 
 The first live hardware pass completed successfully, but the kernel repeatedly
 reported PCIe AER errors on the G1's USB4/Thunderbolt path. These included
@@ -462,11 +462,16 @@ completed in approximately 5.93 seconds and the internal transition in 4.44
 seconds while Gamescope remained usable. EGB-023 therefore remains open even
 though the integrated switching gate passed.
 
+The on-demand diagnostic report now counts canonical AER events by severity,
+layer, BDF, and error type; reports recovery failures separately; and marks
+records belonging to the exact validated G1 PCI subtree. This work is read-only
+and does not change kernel or PCIe settings. The UI shows one compact link-health
+headline while retaining device-level evidence in the support payload. Remote
+captures preserve every raw record in `live.txt`, suppress repeated copies only
+from the operator console, and print the structured summary at the end of a run.
+
 Before changing kernel settings, repeat the test with the cable reseated, a
-known-certified USB4 cable, and the other Ally USB4 port. Diagnostics should
-count AER events by severity, BDF, and error type; identify the affected parent
-topology; and warn when the rate exceeds a small threshold. Live capture should
-summarize repeated identical events instead of flooding the operator console.
+known-certified USB4 cable, and the other Ally USB4 port.
 
 ### EGB-024 - Reconcile powered-off eGPU removal cleanly
 
@@ -695,6 +700,48 @@ remote deploy transaction also normalizes staged executables and rejects any fil
 whose first line still contains a carriage return before replacing the active
 plugin. Regression tests lock both boundaries.
 
+### EGB-035 - Support GPD G1 rendering on the Ally internal display
+
+Status: Backlog - not implemented or hardware-validated
+
+Add a third operating mode between the existing portable and TV modes: keep the
+ROG Ally X internal `eDP` panel active while selecting the GPD G1 RX 7600M XT as
+Gamescope's rendering GPU. The expected Gamescope configuration is an internal
+output order such as `-O *,eDP-1` combined with the exact validated G1 Vulkan
+device, for example `--prefer-vk-device 1002:7480`. Completed frames must travel
+back over USB4 for presentation on the internal panel, so this mode may perform
+worse than connecting a display directly to the G1.
+
+The current backend couples the render GPU and output target: external mode
+requires a connected eGPU HDMI/DisplayPort connector, while internal mode clears
+the eGPU preference. Decouple those choices and model three explicit states:
+
+- Portable: Ally iGPU renders to the Ally internal panel.
+- Internal eGPU: GPD G1 renders to the Ally internal panel.
+- TV / docked: GPD G1 renders to its connected external display.
+
+Requirements:
+
+- Do not require a connected TV or G1 display connector for internal-eGPU mode.
+- Persist and verify the exact eGPU PCI/Vulkan identity before restarting
+  Gamescope; never select a generic or first-found external GPU.
+- Report the active render GPU independently from the active display target so
+  an internal panel is not mislabeled as portable/iGPU mode.
+- Preserve the running-game restart guard and clearly explain that entering or
+  leaving the mode restarts Game Mode when the desired Gamescope state differs.
+- Treat internal-eGPU mode as eGPU-active for sleep/resume and disconnect safety.
+  If the G1 is absent at startup or resume, fail back to the internal panel and
+  Ally iGPU. Require a verified return to Portable mode before allowing guarded
+  unplug.
+- Add backend and frontend regression coverage for all three GPU/output
+  combinations, stale or missing G1 identity, no-TV operation, status labels,
+  sleep failback, and safe-disconnect blocking.
+- Hardware-validate on the ROG Ally X/GPD G1 by confirming the Ally panel remains
+  visible, the live Gamescope command targets `eDP` and the RX 7600M XT, a game
+  loads the G1, return to Portable mode succeeds, and guarded unplug remains safe.
+  Record performance at the same resolution on the internal-eGPU and direct-TV
+  paths so the USB4 frame-return cost is visible to users.
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.
@@ -710,7 +757,7 @@ plugin. Regression tests lock both boundaries.
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Seventy-four deterministic backend tests and CI checks are passing locally.
+- Eighty deterministic backend tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 

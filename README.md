@@ -30,6 +30,7 @@ platform-specific.
 - **TV Control** — ADB-based TV power/input control with Wi-Fi auto-start
 - **NVIDIA telemetry** — driver mutation is intentionally disabled in this AMD-focused fork
 - **Dock Detection** — USB4/Thunderbolt dock status, ASMedia 246x identification
+- **PCIe Link Health** — read-only AER/recovery summary tied to the validated G1 topology
 - **Fail-closed unplug control** — PCI removal stays disabled until topology and storage checks exist
 - **Gamepad UI** — fully navigable with Steam Deck gamepad controls
 - **Recovery Hotkeys** — hardware button combos for display recovery

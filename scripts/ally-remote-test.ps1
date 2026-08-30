@@ -164,6 +164,34 @@ function Protect-DiagnosticFile {
     Set-Content -LiteralPath $Path -Value $text -Encoding utf8
 }
 
+function Write-CaptureConsoleLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$Line,
+        [Parameter(Mandatory = $true)][hashtable]$RepeatedCounts
+    )
+
+    if ($Line -notmatch '(?i)AER:|PCIe Bus Error|BadDLLP|BadTLP|ACSViol|error status/mask|can''t recover|cannot recover|device recovery failed') {
+        Write-Host $Line
+        return
+    }
+
+    # Ignore the changing journal timestamp when grouping repeated kernel
+    # records. Tee-Object has already saved the untouched line to live.txt.
+    $key = [regex]::Replace($Line, '^\[journal\]\s+\S+\s+', '[journal] ')
+    $count = 1
+    if ($RepeatedCounts.ContainsKey($key)) {
+        $count = [int]$RepeatedCounts[$key] + 1
+    }
+    $RepeatedCounts[$key] = $count
+
+    if ($count -le 2) {
+        Write-Host $Line
+    }
+    elseif ($count -eq 3) {
+        Write-Host '[journal] Repeated PCIe/AER message suppressed from console; full records remain in live.txt.'
+    }
+}
+
 function New-TestSession {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $session = Join-Path $OutputRoot $stamp
@@ -318,11 +346,21 @@ else
 fi
 wait "`$JOURNAL_PID"
 test -z "`$PLUGIN_PID" || wait "`$PLUGIN_PID"
+echo '===== PCIE LINK HEALTH SUMMARY ====='
+if test -r "`$PLUGIN_DIR/main.py"; then
+  cd "`$PLUGIN_DIR"
+  python3 -c 'import json, main; print(json.dumps(main.collect_pcie_link_health(), sort_keys=True))' 2>&1 || echo 'PCIe link summary unavailable'
+else
+  echo 'PCIe link summary unavailable: main.py missing'
+fi
 echo "LIVE_CAPTURE_END `$(date --iso-8601=seconds)"
 "@
 
     Write-Host "Live capture started for $DurationMinutes minute(s). Perform the display tests on the Ally now."
-    Invoke-RemoteScript -Script $script 2>&1 | Tee-Object -FilePath $capturePath
+    $captureConsoleCounts = @{}
+    Invoke-RemoteScript -Script $script 2>&1 |
+        Tee-Object -FilePath $capturePath |
+        ForEach-Object { Write-CaptureConsoleLine -Line ([string]$_) -RepeatedCounts $captureConsoleCounts }
     Protect-DiagnosticFile -Path $capturePath
     Save-Snapshot -SessionDirectory $session -Name "after"
     Write-Host "Capture complete: $session"

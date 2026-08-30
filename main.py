@@ -3858,6 +3858,204 @@ _DIAGNOSTIC_REDACTED = "<redacted>"
 _DIAGNOSTIC_IPV4_RE = re.compile(r"(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9]|\.[0-9])")
 _DIAGNOSTIC_MAC_RE = re.compile(r"(?i)(?<![0-9a-f])(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}(?![0-9a-f])")
 _DIAGNOSTIC_HOME_RE = re.compile(r"(?i)(?<![\w.-])/home/[^/\s]+")
+_PCI_BDF_RE = re.compile(r"\b([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7])\b")
+_PCI_DRIVER_BDF_RE = re.compile(
+    r"\b(?:pcieport|xhci_hcd|amdgpu)\s+([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7])\b",
+    re.IGNORECASE,
+)
+_PCIE_AER_ERROR_NAMES = (
+    "RxErr",
+    "BadTLP",
+    "BadDLLP",
+    "Rollover",
+    "Timeout",
+    "NonFatalErr",
+    "CorrIntErr",
+    "UnsupReq",
+    "CmpltTO",
+    "CmpltAbrt",
+    "UnxCmplt",
+    "RxOF",
+    "MalformedTLP",
+    "ECRC",
+    "ACSViol",
+)
+
+
+def _pcie_event_bdf(line: str) -> str:
+    match = _PCI_DRIVER_BDF_RE.search(str(line or ""))
+    if match is None:
+        match = _PCI_BDF_RE.search(str(line or ""))
+    return match.group(1).lower() if match else "unknown"
+
+
+def summarize_pcie_link_health(journal_text: str, window_minutes: int = 15, g1_pci_functions=None) -> dict:
+    """Collapse repetitive PCIe AER records into a stable diagnostic summary."""
+    severity_counts = {
+        "correctable": 0,
+        "uncorrectable_non_fatal": 0,
+        "uncorrectable_fatal": 0,
+        "other": 0,
+    }
+    layer_counts = {}
+    error_counts = {}
+    devices = {}
+    recovery_failures = 0
+    cannot_recover = 0
+    g1_bdfs = {
+        str(item or "").strip().lower()
+        for item in (g1_pci_functions or [])
+        if _PCI_BDF_RE.fullmatch(str(item or "").strip())
+    }
+
+    def device_record(pci):
+        record = devices.get(pci)
+        if record is None:
+            record = {
+                "pci": pci,
+                "events": 0,
+                "severity_counts": {},
+                "error_counts": {},
+                "recovery_failures": 0,
+                "cannot_recover": 0,
+                "g1_topology": pci in g1_bdfs,
+            }
+            devices[pci] = record
+        return record
+
+    for raw_line in str(journal_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        pci = _pcie_event_bdf(line)
+        record = device_record(pci)
+
+        if "PCIe Bus Error:" in line and "severity=" in line:
+            severity_match = re.search(r"severity=([^,]+)", line, re.IGNORECASE)
+            severity_label = severity_match.group(1).strip().lower() if severity_match else ""
+            if severity_label == "correctable":
+                severity = "correctable"
+            elif "uncorrectable" in severity_label and "non-fatal" in severity_label:
+                severity = "uncorrectable_non_fatal"
+            elif "uncorrectable" in severity_label and "fatal" in severity_label:
+                severity = "uncorrectable_fatal"
+            else:
+                severity = "other"
+            severity_counts[severity] += 1
+            record["events"] += 1
+            record["severity_counts"][severity] = record["severity_counts"].get(severity, 0) + 1
+
+            layer_match = re.search(r"type=([^,]+)", line, re.IGNORECASE)
+            if layer_match:
+                layer = layer_match.group(1).strip()
+                layer_counts[layer] = layer_counts.get(layer, 0) + 1
+
+        lowered = line.lower()
+        if "aer: device recovery failed" in lowered:
+            recovery_failures += 1
+            record["recovery_failures"] += 1
+        if "aer: can't recover" in lowered or "aer: cannot recover" in lowered:
+            cannot_recover += 1
+            record["cannot_recover"] += 1
+
+        for error_name in _PCIE_AER_ERROR_NAMES:
+            if re.search(rf"\b{re.escape(error_name)}\b", line, re.IGNORECASE):
+                error_counts[error_name] = error_counts.get(error_name, 0) + 1
+                record["error_counts"][error_name] = record["error_counts"].get(error_name, 0) + 1
+
+    total_events = sum(severity_counts.values())
+    if severity_counts["uncorrectable_fatal"]:
+        status = "critical"
+    elif severity_counts["uncorrectable_non_fatal"] or recovery_failures or cannot_recover:
+        status = "degraded"
+    elif total_events:
+        status = "warning"
+    else:
+        status = "healthy"
+
+    affected_devices = [
+        record
+        for _, record in sorted(devices.items())
+        if record["events"] or record["error_counts"] or record["recovery_failures"] or record["cannot_recover"]
+    ]
+    g1_related_records = sum(
+        item["events"] + item["recovery_failures"] + item["cannot_recover"]
+        for item in affected_devices
+        if item["g1_topology"]
+    )
+    if status == "healthy":
+        headline = f"Healthy: no PCIe AER events in the last {window_minutes} minutes"
+    else:
+        headline = (
+            f"{status.title()}: {total_events} PCIe AER event(s), "
+            f"{recovery_failures + cannot_recover} recovery failure record(s)"
+        )
+
+    return {
+        "available": True,
+        "status": status,
+        "headline": headline,
+        "window_minutes": int(window_minutes),
+        "total_aer_events": total_events,
+        "severity_counts": severity_counts,
+        "layer_counts": dict(sorted(layer_counts.items())),
+        "error_counts": dict(sorted(error_counts.items())),
+        "recovery_failures": recovery_failures,
+        "cannot_recover": cannot_recover,
+        "affected_devices": affected_devices,
+        "g1_related_records": g1_related_records,
+    }
+
+
+def collect_pcie_link_health(window_minutes: int = 15) -> dict:
+    """Read recent kernel AER records without changing PCIe or kernel state."""
+    try:
+        minutes = max(1, min(60, int(window_minutes)))
+    except Exception:
+        minutes = 15
+
+    query = run(
+        [
+            "/usr/bin/journalctl",
+            "-k",
+            "-b",
+            "--since",
+            f"{minutes} minutes ago",
+            "--no-pager",
+            "--output=cat",
+        ],
+        timeout=10,
+    )
+    if query.get("rc") != 0:
+        return {
+            "available": False,
+            "status": "unknown",
+            "headline": "PCIe link health unavailable",
+            "window_minutes": minutes,
+            "error": str(query.get("err") or "journal query failed")[:240],
+        }
+
+    topology = {}
+    g1_functions = []
+    try:
+        identity = _read_egpu_identity()
+        selected_pci = str(identity.get("pci") or "").lower()
+        if selected_pci:
+            topology = _analyze_gpd_g1_topology(selected_pci, _pci_inventory())
+            g1_functions = [
+                str(item.get("pci") or "")
+                for item in topology.get("pci_functions") or []
+            ]
+    except Exception:
+        topology = {}
+
+    result = summarize_pcie_link_health(query.get("out") or "", minutes, g1_functions)
+    result["g1_topology"] = {
+        "matched": bool(topology.get("complete")),
+        "profile": topology.get("profile"),
+        "root_pci": topology.get("root_pci"),
+    }
+    return result
 
 
 def _redact_diagnostic_text(value, hostname=""):
@@ -3942,6 +4140,7 @@ def build_support_report(include_sensitive=False):
         "version": VERSION,
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "status": status,
+        "pcie_link_health": collect_pcie_link_health(),
         "gamescope_session_block": gamescope_session_block(),
         "plugin_log_tail": tail_text(LOG_PATH, 80),
         "journal_tail": journal.get("out", "")[-8000:],
@@ -3958,6 +4157,7 @@ def build_support_report(include_sensitive=False):
         "recommended_connector": status.get("recommended_connector"),
         "patch_state": status.get("patch_state"),
         "gamescope": status.get("gamescope"),
+        "pcie_link_health": report["pcie_link_health"],
         "gamescope_session_block": report["gamescope_session_block"],
     }
 
@@ -6938,6 +7138,10 @@ def collect_diagnostics(include_sensitive=False):
             info["log_warnings"] = content.lower().count("warn")
     except Exception:
         pass
+
+    # Read-only kernel link summary. This runs only when diagnostics are
+    # explicitly collected, never in the five-second dashboard polling path.
+    info["pcie_link_health"] = collect_pcie_link_health()
 
     # TV config
     info["tv_ip_config"] = _read_tv_conf()

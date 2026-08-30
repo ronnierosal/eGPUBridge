@@ -101,8 +101,16 @@ The first deployment of the native logind monitor passed a disconnected sleep
 cycle lasting about 67 seconds in hardware. It recorded `suspend_preparing`, kept
 Decky active and Gamescope internal, and performed recovery once. The clock-gap
 fallback won a resume-time scheduling race before the direct signal was processed,
-so a 0.75-second fallback grace period was added; hardware revalidation of direct
-resume precedence remains pending.
+so a 0.75-second fallback grace period was added. A second disconnected cycle then
+recorded `login1_prepare_for_sleep` first and ignored the timing fallback as a
+duplicate. The final attached-G1 cycle also used the native signal without needing
+the fallback: the full signal interval was 3.379 seconds, hardware sleep was only
+0.137 seconds, wake IRQ was ACPI 9, and the G1 remained present. Decky stayed active
+and Gamescope/configuration remained on the Ally's internal display throughout.
+
+Keeping the native dashboard open during these tests also exposed `pacman -Q mesa`
+running every five seconds. EGB-032 tracks caching this stable package metadata
+without slowing live GPU, link, or display updates.
 
 Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
 The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and

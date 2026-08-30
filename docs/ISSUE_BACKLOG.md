@@ -455,8 +455,8 @@ while retaining the narrower readiness timer for diagnosis.
 
 ### EGB-028 - Recover safely when sleep or resume changes eGPU availability
 
-Status: In progress - startup failback and a debounced resume observer implemented;
-immediate-wake behavior reproduced on hardware 2026-08-30
+Status: In progress - native resume observation hardware-validated for attached and
+disconnected G1 states; externally configured absent-device recovery pending
 
 If the Ally sleeps while Gamescope is bound to the G1, the system may wake after
 the G1 was powered off or unplugged. External-only output and a stale Vulkan
@@ -500,8 +500,6 @@ also showing that the PCI wake-permission toggles are not a valid workaround.
 
 Remaining acceptance criteria:
 
-- Hardware-validate that the direct `PrepareForSleep` monitor records a sub-second
-  attached-G1 cycle without duplicate recovery from the timing fallback.
 - Determine whether an Ally/G1 firmware, embedded-controller, or power-delivery
   update can prevent the ACPI wake while the G1 remains attached.
 - Surface a clear attached-G1 sleep compatibility warning; do not silently change
@@ -570,6 +568,18 @@ the operator to select the G1's HDMI input before the restart is accepted.
 The corrected model label, confirmation, external transition, and return to the
 Ally all passed the follow-up hardware test.
 
+### EGB-032 - Cache stable platform metadata during dashboard polling
+
+Status: Open - reproduced on the native Ally X/GPD G1 dashboard 2026-08-30
+
+While the Quick Access panel is visible, its five-second status refresh runs
+`pacman -Q mesa` every time even though the installed Mesa package cannot normally
+change during a gaming session. The live plugin log showed this command repeating
+throughout the attached-G1 test. Cache stable package metadata for a bounded period
+or plugin lifetime, invalidate it after relevant maintenance actions, and keep live
+GPU/link/display state on the normal refresh cadence. Add a regression test proving
+repeated status calls do not repeatedly spawn the package manager.
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.
@@ -585,7 +595,7 @@ Ally all passed the follow-up hardware test.
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Thirty-eight deterministic tests and CI checks are passing locally.
+- Forty-one deterministic tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 

@@ -751,6 +751,19 @@ class SafetyGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"Read-only check: no hardware was disconnected."', frontend)
         self.assertNotIn('onOKActionDescription: "Safe Disconnect eGPU"', frontend)
 
+    async def test_frontend_refreshes_main_and_dock_status_without_overlapping(self):
+        frontend = (Path(__file__).parents[1] / "src" / "index.tsx").read_text(encoding="utf-8")
+        refresh_block = frontend.split("  function refresh(silent) {", 1)[1].split(
+            "  function doCall(method, args) {", 1
+        )[0]
+
+        self.assertIn('call(serverApi, "status", {})', refresh_block)
+        self.assertIn('call(serverApi, "dock_status", {})', refresh_block)
+        self.assertIn("statusRefreshInFlightRef.current", refresh_block)
+        self.assertIn("Promise.all([statusRequest, dockRequest])", refresh_block)
+        self.assertIn('window.__egpuRefreshStatus', frontend)
+        self.assertIn('onOKActionDescription: "Refresh eGPU status"', frontend)
+
     async def test_readiness_support_snapshot_never_persists_the_release_token(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
             main, "DISCONNECT_READINESS_PATH", Path(tmp) / "readiness.json"

@@ -617,6 +617,22 @@ update on the normal cadence. From plugin startup through more than two minutes 
 polling, the log contained exactly one `pacman -Q mesa` invocation. The scoped
 sleep-compatibility warning was also visually confirmed on the attached G1.
 
+### EGB-033 - Keep hot-plug status current while the plugin remains open
+
+Status: Implemented in the fork, pending hardware verification
+
+After a successful guarded live unplug and hot reconnect, the backend's main
+status snapshot detected the returned G1, but the visible `Dock / eGPU` summary
+remained stale until the operator left eGPUBridge and reopened it. The five-second
+poll refreshed only the main `status` route; the separate `dock_status` route ran
+only when the panel became visible.
+
+The shared refresh path now updates both routes, ignores a new poll while the
+previous hardware probe is still running, and remains gated by Decky's Quick
+Access visibility signal. A visible circular-arrow button in the title bar invokes
+the same refresh path on demand. A frontend regression test locks the paired route
+calls, overlap guard, and explicit control.
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.

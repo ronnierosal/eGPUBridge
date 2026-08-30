@@ -537,6 +537,7 @@ function App(props) {
     var busyState = SP_REACT.useState(false);
     var busy = busyState[0];
     var setBusy = busyState[1];
+    var statusRefreshInFlightRef = SP_REACT.useRef(false);
     var lastState = SP_REACT.useState(null);
     var last = lastState[0];
     var setLast = lastState[1];
@@ -565,6 +566,14 @@ function App(props) {
             showDisconnectReadiness();
         };
         return function () { delete window.__egpuShowDisconnectReadiness; };
+    }, []);
+    // The title bar stays outside App's render tree, so expose one scoped handler
+    // for its explicit refresh button. The regular timer uses the same path.
+    SP_REACT.useEffect(function () {
+        window.__egpuRefreshStatus = function () {
+            refresh(false);
+        };
+        return function () { delete window.__egpuRefreshStatus; };
     }, []);
     SP_REACT.useState(false);
     // UI_SKETCH_ACCORDION_DASHBOARD_91007R4
@@ -686,10 +695,6 @@ function App(props) {
         }
     }
     function loadUiSideStatus(silent) {
-        call(serverApi, "dock_status", {}).then(function (res) {
-            setDockStatus(res);
-        }).catch(function (err) {
-        });
         call(serverApi, "get_hotkey_settings", {}).then(function (res) {
             absorbUiResult("get_hotkey_settings", res);
         }).catch(function (err) {
@@ -700,16 +705,33 @@ function App(props) {
         });
     }
     function refresh(silent) {
+        // A slow hardware probe must not overlap the next five-second poll. Apart
+        // from avoiding needless work, this prevents an older response from
+        // replacing a newer connected/disconnected state.
+        if (statusRefreshInFlightRef.current) {
+            return Promise.resolve({ ok: true, skipped: true, reason: "refresh_in_progress" });
+        }
+        statusRefreshInFlightRef.current = true;
         if (!silent)
             setBusy(true);
-        call(serverApi, "status", {}).then(function (res) {
+        var statusRequest = call(serverApi, "status", {}).then(function (res) {
             setStatus(res);
             if (!silent)
                 setLast(res);
         }).catch(function (err) {
             if (!silent)
                 setLast({ ok: false, error: String(err) });
-        }).finally(function () {
+        });
+        // The Dock / eGPU row has its own backend route. Refresh it together with
+        // the main status so hot-plug changes appear without leaving the plugin.
+        var dockRequest = call(serverApi, "dock_status", {}).then(function (res) {
+            setDockStatus(res);
+        }).catch(function (err) {
+            if (!silent)
+                setLast({ ok: false, source: "dock_status", error: String(err) });
+        });
+        return Promise.all([statusRequest, dockRequest]).finally(function () {
+            statusRefreshInFlightRef.current = false;
             if (!silent)
                 setBusy(false);
         });
@@ -2134,6 +2156,28 @@ function createPlugin() {
             style: { display: "flex", padding: "0", flex: "auto", boxShadow: "none" },
             className: "quickaccessmenu_TitleView_3VRtw"
         }, SP_REACT.createElement("div", { style: { marginRight: "auto" } }, "eGPUBridge"), SP_REACT.createElement(DFL.DialogButton, {
+            onOKActionDescription: "Refresh eGPU status",
+            style: {
+                height: "28px",
+                width: "40px",
+                minWidth: 0,
+                padding: 0,
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center"
+            },
+            onClick: function () {
+                if (typeof window.__egpuRefreshStatus === "function") {
+                    window.__egpuRefreshStatus();
+                }
+            }
+        },
+        // Circular arrows: refresh both the main status and Dock / eGPU row.
+        e("svg", {
+            width: "16", height: "16", viewBox: "0 0 24 24",
+            fill: "none", stroke: "currentColor",
+            strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round"
+        }, e("polyline", { points: "23,4 23,10 17,10" }), e("polyline", { points: "1,20 1,14 7,14" }), e("path", { d: "M3.51 9a9 9 0 0 1 14.85-3.36L23 10" }), e("path", { d: "M20.49 15a9 9 0 0 1-14.85 3.36L1 14" }))), SP_REACT.createElement(DFL.DialogButton, {
             onOKActionDescription: "Select TV Mode",
             style: {
                 height: "28px",

@@ -135,8 +135,21 @@ the Ally display was active, no Steam games or DRM clients were present, no PCM
 audio stream was open, no block devices were below the G1, and the only sound
 client was WirePlumber monitoring `controlC2`. The token-free report also matched
 the exact `Tapex Creek` identity and contained no unexpected PCI endpoints. This
-evidence enables the guarded release path for a controlled first removal test;
-no live PCI removal had been performed at the time of this report.
+evidence enabled the guarded release path for a controlled first removal test.
+
+The guarded release then passed its first hardware test. eGPUBridge completed a
+fresh readiness recheck, removed the exact G1 enclosure root, deauthorized the
+matched USB4 device, verified that the Ally remained on its internal display, and
+reported `Safe to unplug`. The operator unplugged the cable without a visible Ally
+or Decky failure. The kernel logged expected AMDGPU/xHCI teardown plus non-fatal
+AER recovery noise. Reconnecting the G1 enumerated the same topology and completed
+AMDGPU initialization despite PCI BAR allocation warnings and a 256 MiB fallback.
+The G1 was usable and detected again.
+
+That reconnect exposed a frontend freshness gap: the backend status was current,
+but the `Dock / eGPU` summary did not change until the plugin was reopened. EGB-033
+tracks the paired automatic refresh and visible manual refresh control added from
+this observation.
 
 Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
 The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and

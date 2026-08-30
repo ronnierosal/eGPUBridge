@@ -86,7 +86,7 @@ function Protect-DiagnosticFile {
     )
     $text = [regex]::Replace(
         $text,
-        '(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9.])',
+        '(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9]|\.[0-9])',
         '<redacted>'
     )
     $text = [regex]::Replace($text, '(?i)(?<![\w.-])/home/[^/\s]+', '/home/<redacted>')

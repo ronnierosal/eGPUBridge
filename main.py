@@ -2600,7 +2600,7 @@ def make_encoded_report(obj) -> str:
 
 
 _DIAGNOSTIC_REDACTED = "<redacted>"
-_DIAGNOSTIC_IPV4_RE = re.compile(r"(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9.])")
+_DIAGNOSTIC_IPV4_RE = re.compile(r"(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9]|\.[0-9])")
 _DIAGNOSTIC_MAC_RE = re.compile(r"(?i)(?<![0-9a-f])(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}(?![0-9a-f])")
 _DIAGNOSTIC_HOME_RE = re.compile(r"(?i)(?<![\w.-])/home/[^/\s]+")
 

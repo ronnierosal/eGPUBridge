@@ -390,7 +390,7 @@ class DiagnosticRedactionTests(unittest.TestCase):
         payload = {
             "hostname": "ally-livingroom",
             "tv": {"ip": "192.168.50.22", "mac": "AA:BB:CC:DD:EE:FF"},
-            "log": "ally-livingroom connected from /home/ronnie at 10.0.0.8",
+            "log": "ally-livingroom connected from /home/ronnie at 10.0.0.8. Version 1.2.3.4.5",
             "gpu": "65:00.0 VGA compatible controller: AMD Device 7480",
         }
 
@@ -401,6 +401,8 @@ class DiagnosticRedactionTests(unittest.TestCase):
         self.assertNotIn("192.168.50.22", serialized)
         self.assertNotIn("AA:BB:CC:DD:EE:FF", serialized)
         self.assertNotIn("/home/ronnie", serialized)
+        self.assertNotIn("10.0.0.8", serialized)
+        self.assertIn("1.2.3.4.5", serialized)
         self.assertIn("65:00.0", serialized)
         self.assertIn("7480", serialized)
 

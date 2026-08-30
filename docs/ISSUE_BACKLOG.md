@@ -103,7 +103,7 @@ Video reference:
 
 ### EGB-003 - Replace both unsafe disconnect implementations
 
-Status: In progress - destructive controls remain disabled; read-only readiness reporting is implemented
+Status: In progress - guarded release implemented; destructive step remains disabled pending read-only hardware validation
 
 `prepare_for_unplug` restarts SDDM, sleeps eight seconds, and announces readiness
 without proving that the internal panel is active or that the eGPU is idle. The
@@ -133,9 +133,23 @@ Current safe foundation:
 - It resolves only the DRM nodes owned by that exact PCI function and reports
   processes holding those nodes using PID, process name, and UID only.
 - The internal Gamescope target must be active.
-- It deliberately reports `ready: false` until the common USB4 tunnel and all
-  sibling PCI, USB, block, filesystem, and mount dependencies can be proven.
-- The legacy destructive paths remain disabled in both the UI and backend.
+- The Ally X/GPD G1 profile now proves the selected RX 7600M XT, its HDMI-audio
+  function, Titan Ridge xHCI controller, and removable Intel `8086:15ef` parent
+  bridge before offering readiness.
+- It enumerates USB children, external block devices, mounts, swaps, block-device
+  clients, G1 sound nodes, active PCM clients, Steam game scopes, and DRM clients.
+- Any external storage is conservatively blocked in the first release even when
+  it is unmounted. Running games and active HDMI-audio streams are also blocked.
+- A 30-second one-time token binds the final operation to the exact GPU, parent
+  bridge, and authorized `Tapex Creek` USB4 identity. Conditions are rechecked
+  before any mutation.
+- The guarded operation locks future Gamescope configuration to the internal GPU,
+  syncs filesystems, removes the exact G1 parent PCI bridge, deauthorizes only the
+  matched USB4 device, and reports safe-to-unplug only after the G1 disappears and
+  the internal display remains active.
+- Hardware release remains disabled until the new token-free readiness snapshot
+  is collected and reviewed on the Ally X/GPD G1. The old destructive paths stay
+  disabled permanently.
 - The misleading disabled eject control is replaced by a read-only Disconnect
   Check. Both the title-bar icon and Recovery / Safety row show the same visible
   blocker report and explicitly confirm that no hardware was disconnected.

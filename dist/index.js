@@ -58,6 +58,7 @@ const backendRpc = {
     restore_internal_mode: objectArg("restore_internal_mode"),
     safe_disconnect: noArgs("safe_disconnect"),
     safe_disconnect_readiness: noArgs("safe_disconnect_readiness"),
+    safe_live_unplug: objectArg("safe_live_unplug"),
     save_tv_ip: objectArg("save_tv_ip"),
     set_hotkey_settings: objectArg("set_hotkey_settings"),
     set_tv_automation_settings: objectArg("set_tv_automation_settings"),
@@ -756,23 +757,65 @@ function App(props) {
             setLast(res);
             var blockers = res && Array.isArray(res.blockers) ? res.blockers : [];
             var identity = res && res.identity ? res.identity : null;
+            var canRelease = !!(res && res.ready && res.release_enabled);
             var modalHandle = null;
             function closeModal() {
                 if (modalHandle && typeof modalHandle.Close === "function")
                     modalHandle.Close();
             }
             modalHandle = DFL.showModal(SP_REACT.createElement(DFL.ConfirmModal, {
-                strTitle: res && res.ready ? "Ready to disconnect" : "Disconnect blocked",
+                strTitle: canRelease ? "Release the GPD G1?" : (res && res.ready ? "Checks passed" : "Disconnect blocked"),
+                strOKButtonText: canRelease ? "Release G1" : "Close",
+                strCancelButtonText: "Cancel",
+                bHideCancelButton: !canRelease,
+                bDisableBackgroundDismiss: canRelease,
+                onOK: function () {
+                    closeModal();
+                    if (canRelease && res.token)
+                        runSafeLiveUnplug(res.token);
+                },
+                onCancel: closeModal,
+            }, e("div", { style: { fontSize: "13px", lineHeight: "18px" } }, identity ? e("p", { style: { margin: "0 0 8px", fontWeight: "700" } }, (identity.description || "External GPU") + " · " + (identity.pci || "unknown PCI")) : null, blockers.length ? e("div", { style: { margin: "0 0 8px" } }, blockers.map(function (blocker, index) {
+                return e("div", { key: blocker.code || index, style: { marginBottom: "5px" } }, "• " + (blocker.message || blocker.code || "Readiness check failed"));
+            })) : e("p", { style: { margin: "0 0 8px" } }, "No games, GPU clients, active G1 audio streams, or external storage were detected. The Ally internal display is active."), e("p", { style: { margin: "0", color: "rgba(255,210,90,.95)", fontWeight: "700" } }, canRelease
+                ? "Press Release G1, then wait for the Safe to unplug message before removing the cable."
+                : (res && res.ready
+                    ? "Read-only checks passed. Hardware release remains disabled until this report is validated."
+                    : "Read-only check: no hardware was disconnected.")))), window, { strTitle: "eGPUBridge", bNeverPopOut: true });
+        }).catch(function (err) {
+            setLast({ ok: false, source: "safe_disconnect_readiness", error: String(err) });
+        }).finally(function () {
+            setBusy(false);
+        });
+    }
+    function runSafeLiveUnplug(token) {
+        setBusy(true);
+        call(serverApi, "safe_live_unplug", { token: token }).then(function (res) {
+            setLast(res);
+            var modalHandle = null;
+            function closeModal() {
+                if (modalHandle && typeof modalHandle.Close === "function")
+                    modalHandle.Close();
+            }
+            var success = !!(res && res.ok && res.safe_to_unplug);
+            modalHandle = DFL.showModal(SP_REACT.createElement(DFL.ConfirmModal, {
+                strTitle: success ? "Safe to unplug" : "Keep the G1 connected",
                 strOKButtonText: "Close",
                 bHideCancelButton: true,
                 bDisableBackgroundDismiss: false,
                 onOK: closeModal,
                 onCancel: closeModal,
-            }, e("div", { style: { fontSize: "13px", lineHeight: "18px" } }, identity ? e("p", { style: { margin: "0 0 8px", fontWeight: "700" } }, (identity.description || "External GPU") + " · " + (identity.pci || "unknown PCI")) : null, blockers.length ? e("div", { style: { margin: "0 0 8px" } }, blockers.map(function (blocker, index) {
-                return e("div", { key: blocker.code || index, style: { marginBottom: "5px" } }, "• " + (blocker.message || blocker.code || "Readiness check failed"));
-            })) : e("p", { style: { margin: "0 0 8px" } }, "No blockers were reported."), e("p", { style: { margin: "0", color: "rgba(255,210,90,.95)", fontWeight: "700" } }, "Read-only check: no hardware was disconnected."))), window, { strTitle: "eGPUBridge", bNeverPopOut: true });
+            }, e("div", { style: { fontSize: "13px", lineHeight: "18px" } }, e("p", {
+                style: {
+                    margin: "0",
+                    color: success ? "rgba(110,255,165,.95)" : "rgba(255,150,150,.95)",
+                    fontWeight: "800"
+                }
+            }, success
+                ? "The GPD G1 PCI and USB4 connection has been released. You may unplug the USB4 cable now."
+                : ((res && (res.error || res.message)) || "Release verification failed. Keep the G1 connected and shut down normally.")))), window, { strTitle: "eGPUBridge", bNeverPopOut: true });
         }).catch(function (err) {
-            setLast({ ok: false, source: "safe_disconnect_readiness", error: String(err) });
+            setLast({ ok: false, source: "safe_live_unplug", error: String(err) });
         }).finally(function () {
             setBusy(false);
         });

@@ -729,9 +729,10 @@ class SafetyGateTests(unittest.IsolatedAsyncioTestCase):
         fan = await main.gpu_set_fan_control(mode="manual", pwm=0)
         clocks = await main.gpu_set_od_clocks(sclk_mhz=9999, commit=True)
         disconnect = await main.Plugin.safe_disconnect()
+        live_unplug = await main.Plugin.safe_live_unplug({"token": "not-valid"})
         install = await main.nvidia_install_driver()
 
-        for result in (fan, clocks, disconnect, install):
+        for result in (fan, clocks, disconnect, live_unplug, install):
             self.assertFalse(result["ok"])
             self.assertTrue(result["disabled"])
             self.assertEqual(result["error_code"], "feature_disabled_for_safety")
@@ -745,8 +746,28 @@ class SafetyGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"Read-only check: no hardware was disconnected."', frontend)
         self.assertNotIn('onOKActionDescription: "Safe Disconnect eGPU"', frontend)
 
+    async def test_readiness_support_snapshot_never_persists_the_release_token(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            main, "DISCONNECT_READINESS_PATH", Path(tmp) / "readiness.json"
+        ), mock.patch.object(main, "log"):
+            main._record_disconnect_readiness({
+                "ok": True,
+                "ready": True,
+                "token": "one-time-secret",
+                "blockers": [],
+                "checks": {"usb4_storage_topology": {"root_pci": "0000:04:00.0"}},
+            })
+            snapshot = json.loads(main.DISCONNECT_READINESS_PATH.read_text())
+
+        self.assertNotIn("token", snapshot)
+        self.assertTrue(snapshot["ready"])
+
 
 class SafeDisconnectReadinessTests(unittest.TestCase):
+    def tearDown(self):
+        with main._live_unplug_tokens_lock:
+            main._live_unplug_tokens.clear()
+
     def _egpu(self, pci="0000:08:00.0", card="card1"):
         return {
             "card": card,
@@ -757,6 +778,74 @@ class SafeDisconnectReadinessTests(unittest.TestCase):
             "lspci": "VGA compatible controller: AMD RX 7600M XT",
             "is_egpu": True,
         }
+
+    def _g1_inventory(self):
+        root = "/sys/devices/pci0000:00/0000:00:03.1/0000:04:00.0"
+        def item(pci, suffix, vendor, device, device_class, driver="pcieport", removable=False):
+            return {
+                "pci": pci,
+                "real_path": root + suffix,
+                "vendor": vendor,
+                "device": device,
+                "class": device_class,
+                "driver": driver,
+                "remove_path": f"/sys/bus/pci/devices/{pci}/remove",
+                "remove_available": removable,
+            }
+        return [
+            item("0000:04:00.0", "", "0x8086", "0x15ef", "0x060400", removable=True),
+            item("0000:05:01.0", "/0000:05:01.0", "0x8086", "0x15ef", "0x060400"),
+            item("0000:05:02.0", "/0000:05:02.0", "0x8086", "0x15ef", "0x060400"),
+            item("0000:06:00.0", "/0000:05:01.0/0000:06:00.0", "0x1002", "0x1478", "0x060400"),
+            item("0000:07:00.0", "/0000:05:01.0/0000:06:00.0/0000:07:00.0", "0x1002", "0x1479", "0x060400"),
+            item("0000:08:00.0", "/0000:05:01.0/0000:06:00.0/0000:07:00.0/0000:08:00.0", "0x1002", "0x7480", "0x030000", "amdgpu"),
+            item("0000:08:00.1", "/0000:05:01.0/0000:06:00.0/0000:07:00.0/0000:08:00.1", "0x1002", "0xab30", "0x040300", "snd_hda_intel"),
+            item("0000:09:00.0", "/0000:05:02.0/0000:09:00.0", "0x8086", "0x15f0", "0x0c0330", "xhci_hcd"),
+        ]
+
+    def _readiness(self, block_devices=None, sound_clients=None, issue_token=False):
+        thunderbolt = {
+            "ok": True,
+            "complete": True,
+            "device": {
+                "id": "0-2",
+                "name": "Tapex Creek",
+                "vendor": "Intel",
+                "authorized": "1",
+                "authorized_path": "/sys/bus/thunderbolt/devices/0-2/authorized",
+                "unique_id": "g1-test-id",
+            },
+        }
+        def process_scan(nodes, _proc_root=Path("/proc")):
+            is_sound = any("/snd/" in str(node).replace("\\", "/") for node in nodes or [])
+            return {
+                "ok": True,
+                "complete": True,
+                "clients": list(sound_clients or []) if is_sound else [],
+            }
+
+        with mock.patch.object(
+            main, "_drm_nodes_for_pci", return_value={"ok": True, "complete": True, "nodes": ["/dev/dri/card1"]}
+        ), mock.patch.object(
+            main, "_processes_using_device_nodes", side_effect=process_scan
+        ), mock.patch.object(
+            main, "_gpd_g1_thunderbolt_device", return_value=thunderbolt
+        ), mock.patch.object(
+            main, "_usb_devices_under_path", return_value={"ok": True, "complete": True, "devices": []}
+        ), mock.patch.object(
+            main,
+            "_block_devices_under_path",
+            return_value={"ok": True, "complete": True, "devices": list(block_devices or [])},
+        ), mock.patch.object(
+            main, "_class_nodes_under_path", return_value={"ok": True, "complete": True, "nodes": ["/dev/snd/controlC2"]}
+        ):
+            return main.safe_disconnect_readiness(
+                cards=[self._egpu()],
+                status_obj={"display_target": "internal", "internal_display": {"active": True}},
+                pci_inventory=self._g1_inventory(),
+                running_games={"ok": True, "games": [], "count": 0},
+                issue_token=issue_token,
+            )
 
     def test_ambiguous_external_gpus_fail_closed(self):
         result = main.safe_disconnect_readiness(
@@ -832,6 +921,137 @@ class SafeDisconnectReadinessTests(unittest.TestCase):
         self.assertIn("internal_display_not_verified", codes)
         self.assertFalse(result["ready"])
 
+    def test_missing_optional_drm_control_node_does_not_block_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pci_device = root / "selected-egpu"
+            drm_root = pci_device / "drm"
+            dev_root = root / "dev" / "dri"
+            drm_root.mkdir(parents=True)
+            dev_root.mkdir(parents=True)
+            for name in ("card1", "renderD129", "controlD65"):
+                (drm_root / name).touch()
+            (dev_root / "card1").touch()
+            (dev_root / "renderD129").touch()
+
+            result = main._drm_nodes_for_pci(
+                "0000:08:00.0",
+                dev_dri_root=dev_root,
+                pci_device_path=pci_device,
+            )
+
+        self.assertTrue(result["complete"])
+        self.assertEqual(len(result["nodes"]), 2)
+        self.assertTrue(result["unavailable_optional_nodes"][0].endswith("controlD65"))
+
+    def test_validated_g1_topology_can_issue_one_time_readiness_token(self):
+        topology = main._analyze_gpd_g1_topology("0000:08:00.0", self._g1_inventory())
+        self.assertTrue(topology["complete"])
+        self.assertEqual(topology["root_pci"], "0000:04:00.0")
+        self.assertEqual(topology["audio_pci"], ["0000:08:00.1"])
+        self.assertEqual(topology["xhci_pci"], ["0000:09:00.0"])
+
+        result = self._readiness(issue_token=True)
+        self.assertTrue(result["ready"])
+        self.assertTrue(result["token"])
+        self.assertEqual(result["blockers"], [])
+
+    def test_any_g1_storage_blocks_live_unplug_even_when_unmounted(self):
+        result = self._readiness(block_devices=[{
+            "name": "sda",
+            "node": "/dev/sda",
+            "dev": "8:0",
+            "mounts": [],
+            "swap": False,
+        }])
+
+        self.assertFalse(result["ready"])
+        self.assertIn("external_storage_present", [item["code"] for item in result["blockers"]])
+
+    def test_audio_control_monitor_is_allowed_but_active_pcm_is_blocked(self):
+        control = {"pid": 12, "comm": "wireplumber", "nodes": ["/dev/snd/controlC2"]}
+        control_result = self._readiness(sound_clients=[control])
+        self.assertTrue(control_result["ready"])
+
+        playback = {"pid": 13, "comm": "pipewire", "nodes": ["/dev/snd/pcmC2D3p"]}
+        playback_result = self._readiness(sound_clients=[playback])
+        self.assertFalse(playback_result["ready"])
+        self.assertIn("egpu_audio_in_use", [item["code"] for item in playback_result["blockers"]])
+
+    def test_live_unplug_rechecks_conditions_before_any_mutation(self):
+        token = main._issue_live_unplug_token({"gpu_pci": "0000:08:00.0"})
+        with mock.patch.object(main, "LIVE_UNPLUG_RELEASE_ENABLED", True), mock.patch.object(
+            main,
+            "safe_disconnect_readiness",
+            return_value={"ok": True, "ready": False, "blockers": [{"code": "running_game"}]},
+        ), mock.patch.object(main, "write_gamescope_wrapper_config") as write_config:
+            result = main.safe_live_unplug(token)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_code"], "readiness_changed")
+        write_config.assert_not_called()
+
+    def test_live_unplug_writes_only_validated_control_paths_and_verifies_internal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pci_root = root / "pci"
+            thunderbolt_root = root / "thunderbolt"
+            remove_path = pci_root / "g1-root" / "remove"
+            authorized_path = thunderbolt_root / "0-2" / "authorized"
+            remove_path.parent.mkdir(parents=True)
+            authorized_path.parent.mkdir(parents=True)
+            remove_path.write_text("")
+            authorized_path.write_text("1")
+
+            fingerprint = {
+                "gpu_pci": "g1-gpu",
+                "root_pci": "g1-root",
+                "thunderbolt_id": "0-2",
+                "thunderbolt_unique_id": "g1-test-id",
+            }
+            token = main._issue_live_unplug_token(fingerprint)
+            readiness = {
+                "ok": True,
+                "ready": True,
+                "identity": {"pci": "g1-gpu"},
+                "checks": {
+                    "usb4_storage_topology": {
+                        "root_pci": "g1-root",
+                        "remove_path": str(remove_path),
+                    },
+                    "thunderbolt_authorization": {
+                        "device": {
+                            "id": "0-2",
+                            "name": "Tapex Creek",
+                            "unique_id": "g1-test-id",
+                            "authorized_path": str(authorized_path),
+                        }
+                    },
+                },
+            }
+
+            with mock.patch.object(main, "LIVE_UNPLUG_RELEASE_ENABLED", True), mock.patch.object(
+                main, "safe_disconnect_readiness", return_value=readiness
+            ), mock.patch.object(
+                main, "write_gamescope_wrapper_config", return_value={"ok": True}
+            ), mock.patch.object(
+                main, "write_gamescope_mode_config", return_value={"ok": True}
+            ), mock.patch.object(
+                main, "update_gamescope_user_environment", return_value={"ok": True}
+            ), mock.patch.object(
+                main, "_wait_for_path_absent", return_value=True
+            ), mock.patch.object(
+                main, "build_status", return_value={
+                    "display_target": "internal",
+                    "internal_display": {"active": True},
+                    "egpu": None,
+                }
+            ), mock.patch.object(main.os, "sync", create=True):
+                result = main.safe_live_unplug(token, pci_root, thunderbolt_root)
+            self.assertTrue(result["safe_to_unplug"])
+            self.assertEqual(remove_path.read_text(), "1")
+            self.assertEqual(authorized_path.read_text(), "0")
+
 
 class InternalConnectorSafetyTests(unittest.TestCase):
     def test_missing_edp_connector_has_no_guessed_id(self):
@@ -853,7 +1073,7 @@ class DeckyApiContractTests(unittest.TestCase):
         plugin = main.Plugin()
         registry = (Path(__file__).parents[1] / "src" / "backend.ts").read_text()
         routes = re.findall(r"^  ([a-z][a-z0-9_]+): (noArgs|objectArg)\(", registry, re.MULTILINE)
-        self.assertEqual(len(routes), 35)
+        self.assertEqual(len(routes), 36)
         for route, adapter in routes:
             method = getattr(plugin, route)
             signature = inspect.signature(method)

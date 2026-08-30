@@ -119,6 +119,21 @@ plugin log contained exactly one `pacman -Q mesa` invocation at startup. This
 confirms the five-minute cache removed package-manager polling without freezing
 live dashboard state.
 
+Read-only topology work for safe live unplug identified one exact G1 PCI subtree
+under the Ally root port `0000:00:03.1`. The removable enclosure root is Intel
+Titan Ridge bridge `0000:04:00.0` (`8086:15ef`). Its children include RX 7600M XT
+`0000:08:00.0`, HDMI/DP audio `0000:08:00.1`, and Titan Ridge xHCI
+`0000:09:00.0`; the authorized USB4 device is the sole non-host `0-2` device,
+reported as Intel `Tapex Creek`. No block devices were below that subtree during
+inspection. G1 sound nodes belong to card 2; WirePlumber holds its control node,
+but no PCM playback node was open. SteamOS exposes card and render device nodes
+for the G1 while the optional DRM control node is absent from `/dev/dri`, which is
+now handled without weakening the required card/render identity checks.
+
+The release mutation remains disabled until the deployed read-only report proves
+the same topology and zero blockers from Decky's root backend. No live PCI removal
+was performed during this inspection.
+
 Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
 The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and
 EGB-024 track the safe-unplug and removal-reconciliation work.

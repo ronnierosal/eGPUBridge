@@ -47,6 +47,7 @@ export const backendRpc = {
   restore_internal_mode: objectArg("restore_internal_mode"),
   safe_disconnect: noArgs("safe_disconnect"),
   safe_disconnect_readiness: noArgs("safe_disconnect_readiness"),
+  safe_live_unplug: objectArg("safe_live_unplug"),
   save_tv_ip: objectArg("save_tv_ip"),
   set_hotkey_settings: objectArg("set_hotkey_settings"),
   set_tv_automation_settings: objectArg("set_tv_automation_settings"),

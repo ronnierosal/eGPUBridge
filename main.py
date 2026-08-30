@@ -3,6 +3,7 @@ import re
 import json
 import time
 import signal
+import secrets
 import shutil
 import subprocess
 import select
@@ -37,12 +38,16 @@ GAMESCOPE_MODE_CONF = PLUGIN_DIR / "gamescope_mode.conf"
 GAMESCOPE_SHIM = PLUGIN_DIR / "bin" / "gamescope"
 TRANSITION_PATH = PLUGIN_DIR / "display_transition.json"
 RESUME_STATE_PATH = PLUGIN_DIR / "sleep_resume.json"
+DISCONNECT_READINESS_PATH = PLUGIN_DIR / "disconnect_readiness.json"
 GAMESCOPE_UNIT = "gamescope-session.service"
 GAMESCOPE_TARGET = "gamescope-session.target"
 
 # These controls remain callable by older frontends, so the backend must fail
 # closed as well as hiding them in the current UI.
 UNSAFE_HARDWARE_CONTROLS_ENABLED = False
+# The complete release path is implemented but remains off until the read-only
+# report is hardware-validated on the Ally X/GPD G1 after deployment.
+LIVE_UNPLUG_RELEASE_ENABLED = False
 
 ENV_OVERRIDE = Path("/home/deck/.config/environment.d/99-egpubridge.conf")
 
@@ -53,6 +58,10 @@ PCI_VENDOR_AMD = "0x1002"
 PCI_VENDOR_NVIDIA = "0x10de"
 PCI_VENDOR_INTEL = "0x8086"
 _operation_lock = None
+
+LIVE_UNPLUG_TOKEN_SECONDS = 30.0
+_live_unplug_tokens = {}
+_live_unplug_tokens_lock = threading.Lock()
 
 
 def _read_vendor() -> str:
@@ -719,19 +728,28 @@ def _drm_nodes_for_pci(
 
     nodes = []
     missing = []
+    unavailable_optional = []
     for name in names:
         node = Path(dev_dri_root) / name
         if node.exists():
             nodes.append(str(node))
+        elif name.startswith("controlD"):
+            unavailable_optional.append(str(node))
         else:
             missing.append(str(node))
-    complete = bool(nodes) and not missing
+    node_names = {Path(node).name for node in nodes}
+    required_kinds_present = (
+        any(name.startswith("card") for name in node_names)
+        and any(name.startswith("renderD") for name in node_names)
+    )
+    complete = required_kinds_present and not missing
     return {
         "ok": complete,
         "complete": complete,
         "pci": normalized_pci,
         "nodes": nodes,
         "missing_nodes": missing,
+        "unavailable_optional_nodes": unavailable_optional,
         "error": "" if complete else "exact DRM node set is incomplete",
     }
 
@@ -799,6 +817,482 @@ def _processes_using_device_nodes(node_paths, proc_root=Path("/proc")) -> dict:
     }
 
 
+def _pci_inventory(sys_pci_root=Path("/sys/bus/pci/devices")) -> list:
+    inventory = []
+    try:
+        entries = sorted(Path(sys_pci_root).iterdir())
+    except Exception:
+        return inventory
+    for entry in entries:
+        if not re.fullmatch(r"[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]", entry.name):
+            continue
+        try:
+            real_path = str(entry.resolve(strict=True)).replace("\\", "/")
+        except Exception:
+            continue
+        try:
+            driver = (entry / "driver").resolve().name if (entry / "driver").exists() else ""
+        except Exception:
+            driver = ""
+        inventory.append({
+            "pci": entry.name.lower(),
+            "real_path": real_path,
+            "vendor": read_text(entry / "vendor").strip().lower(),
+            "device": read_text(entry / "device").strip().lower(),
+            "class": read_text(entry / "class").strip().lower(),
+            "driver": driver,
+            "remove_path": str(entry / "remove"),
+            "remove_available": (entry / "remove").exists(),
+        })
+    return inventory
+
+
+def _analyze_gpd_g1_topology(selected_pci: str, inventory) -> dict:
+    """Prove the validated Ally X/GPD G1 PCI layout from one selected GPU."""
+    selected = str(selected_pci or "").lower()
+    items = [dict(item) for item in inventory or []]
+    by_pci = {str(item.get("pci") or "").lower(): item for item in items}
+    gpu = by_pci.get(selected)
+    if not gpu:
+        return {"ok": False, "complete": False, "error": "selected GPU is missing from PCI inventory"}
+
+    chain = re.findall(
+        r"[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]",
+        str(gpu.get("real_path") or "").replace("\\", "/"),
+    )
+    if len(chain) < 2 or chain[-1].lower() != selected:
+        return {"ok": False, "complete": False, "error": "selected GPU ancestry is incomplete"}
+
+    root_pci = chain[1].lower()
+    root = by_pci.get(root_pci)
+    if not root:
+        return {"ok": False, "complete": False, "error": "external PCI tunnel root is missing"}
+    root_path = str(root.get("real_path") or "").rstrip("/")
+    subtree = [
+        item for item in items
+        if str(item.get("real_path") or "").rstrip("/") == root_path
+        or str(item.get("real_path") or "").startswith(root_path + "/")
+    ]
+
+    root_matches = (
+        root.get("vendor") == "0x8086"
+        and root.get("device") == "0x15ef"
+        and str(root.get("class") or "").startswith("0x0604")
+        and bool(root.get("remove_available"))
+    )
+    gpu_matches = (
+        gpu.get("vendor") == "0x1002"
+        and gpu.get("device") == "0x7480"
+        and str(gpu.get("class") or "").startswith("0x0300")
+    )
+    audio = [
+        item for item in subtree
+        if item.get("vendor") == "0x1002"
+        and item.get("device") == "0xab30"
+        and str(item.get("class") or "").startswith("0x0403")
+    ]
+    xhci = [
+        item for item in subtree
+        if item.get("vendor") == "0x8086"
+        and item.get("device") == "0x15f0"
+        and str(item.get("class") or "").startswith("0x0c0330")
+    ]
+    allowed_endpoints = {selected}
+    allowed_endpoints.update(str(item.get("pci") or "") for item in audio + xhci)
+    unexpected_endpoints = [
+        item for item in subtree
+        if not str(item.get("class") or "").startswith("0x0604")
+        and str(item.get("pci") or "") not in allowed_endpoints
+    ]
+
+    errors = []
+    if not root_matches:
+        errors.append("external root is not the validated removable Intel 15ef bridge")
+    if not gpu_matches:
+        errors.append("selected GPU is not the validated RX 7600M XT 1002:7480")
+    if len(audio) != 1:
+        errors.append(f"expected one G1 HDMI-audio function, found {len(audio)}")
+    if len(xhci) != 1:
+        errors.append(f"expected one G1 USB controller, found {len(xhci)}")
+    if unexpected_endpoints:
+        errors.append(f"found {len(unexpected_endpoints)} unexpected PCI endpoint(s) in the G1 subtree")
+
+    complete = not errors
+    return {
+        "ok": complete,
+        "complete": complete,
+        "profile": "gpd-g1-rx7600mxt-titan-ridge",
+        "selected_gpu": selected,
+        "root_pci": root_pci,
+        "root_path": root_path,
+        "remove_path": str(root.get("remove_path") or ""),
+        "audio_pci": [str(item.get("pci") or "") for item in audio],
+        "xhci_pci": [str(item.get("pci") or "") for item in xhci],
+        "pci_functions": [
+            {
+                "pci": item.get("pci"),
+                "vendor": item.get("vendor"),
+                "device": item.get("device"),
+                "class": item.get("class"),
+                "driver": item.get("driver"),
+            }
+            for item in sorted(subtree, key=lambda item: str(item.get("real_path") or ""))
+        ],
+        "unexpected_endpoints": [item.get("pci") for item in unexpected_endpoints],
+        "error": "; ".join(errors),
+    }
+
+
+def _gpd_g1_thunderbolt_device(thunderbolt_root=Path("/sys/bus/thunderbolt/devices")) -> dict:
+    candidates = []
+    try:
+        entries = sorted(Path(thunderbolt_root).iterdir())
+    except Exception as e:
+        return {"ok": False, "complete": False, "error": f"could not inspect USB4 authorization: {e}"}
+    for entry in entries:
+        auth = entry / "authorized"
+        name = read_text(entry / "device_name").strip()
+        vendor = read_text(entry / "vendor_name").strip()
+        if not auth.exists() or not name or not vendor:
+            continue
+        candidates.append({
+            "id": entry.name,
+            "name": name,
+            "vendor": vendor,
+            "authorized": read_text(auth).strip(),
+            "authorized_path": str(auth),
+            "unique_id": read_text(entry / "unique_id").strip(),
+        })
+    authorized = [item for item in candidates if item.get("authorized") == "1"]
+    matches = [
+        item for item in authorized
+        if item.get("name", "").lower() == "tapex creek"
+        and item.get("vendor", "").lower() == "intel"
+    ]
+    complete = len(authorized) == 1 and len(matches) == 1
+    return {
+        "ok": complete,
+        "complete": complete,
+        "device": matches[0] if complete else None,
+        "authorized_devices": authorized,
+        "error": "" if complete else "the exact authorized GPD G1 USB4 device could not be proven",
+    }
+
+
+def _class_nodes_under_path(class_root, dev_root, root_path: str, allowed_name_pattern: str) -> dict:
+    nodes = []
+    try:
+        entries = sorted(Path(class_root).iterdir())
+    except Exception as e:
+        return {"ok": False, "complete": False, "nodes": [], "error": str(e)}
+    prefix = str(root_path or "").rstrip("/") + "/"
+    for entry in entries:
+        if not re.fullmatch(allowed_name_pattern, entry.name):
+            continue
+        try:
+            real_path = str(entry.resolve(strict=True)).replace("\\", "/")
+        except Exception:
+            continue
+        if not (real_path == str(root_path).rstrip("/") or real_path.startswith(prefix)):
+            continue
+        node = Path(dev_root) / entry.name
+        if node.exists():
+            nodes.append(str(node))
+    return {"ok": True, "complete": True, "nodes": sorted(nodes)}
+
+
+def _usb_devices_under_path(root_path: str, usb_root=Path("/sys/bus/usb/devices")) -> dict:
+    devices = []
+    try:
+        entries = sorted(Path(usb_root).iterdir())
+    except Exception as e:
+        return {"ok": False, "complete": False, "devices": [], "error": str(e)}
+    prefix = str(root_path or "").rstrip("/") + "/"
+    for entry in entries:
+        try:
+            real_path = str(entry.resolve(strict=True)).replace("\\", "/")
+        except Exception:
+            continue
+        if not real_path.startswith(prefix):
+            continue
+        vendor = read_text(entry / "idVendor").strip().lower()
+        product = read_text(entry / "idProduct").strip().lower()
+        if not vendor and not product:
+            continue
+        devices.append({
+            "id": entry.name,
+            "vendor": vendor,
+            "product": product,
+            "class": read_text(entry / "bDeviceClass").strip().lower(),
+        })
+    return {"ok": True, "complete": True, "devices": devices}
+
+
+def _block_devices_under_path(
+    root_path: str,
+    block_root=Path("/sys/class/block"),
+    dev_root=Path("/dev"),
+    mountinfo_path=Path("/proc/self/mountinfo"),
+    swaps_path=Path("/proc/swaps"),
+) -> dict:
+    mounts_by_dev = {}
+    try:
+        for line in Path(mountinfo_path).read_text(errors="replace").splitlines():
+            fields = line.split()
+            if len(fields) < 6:
+                continue
+            separator = fields.index("-") if "-" in fields else -1
+            source = fields[separator + 2] if separator >= 0 and len(fields) > separator + 2 else ""
+            mounts_by_dev.setdefault(fields[2], []).append({"mountpoint": fields[4], "source": source})
+    except Exception as e:
+        return {"ok": False, "complete": False, "devices": [], "error": f"could not inspect mounts: {e}"}
+    try:
+        swap_nodes = {
+            line.split()[0] for line in Path(swaps_path).read_text(errors="replace").splitlines()[1:] if line.split()
+        }
+    except Exception as e:
+        return {"ok": False, "complete": False, "devices": [], "error": f"could not inspect swaps: {e}"}
+
+    devices = []
+    prefix = str(root_path or "").rstrip("/") + "/"
+    try:
+        entries = sorted(Path(block_root).iterdir())
+    except Exception as e:
+        return {"ok": False, "complete": False, "devices": [], "error": str(e)}
+    for entry in entries:
+        try:
+            real_path = str(entry.resolve(strict=True)).replace("\\", "/")
+        except Exception:
+            continue
+        if not real_path.startswith(prefix):
+            continue
+        dev_id = read_text(entry / "dev").strip()
+        node = str(Path(dev_root) / entry.name)
+        devices.append({
+            "name": entry.name,
+            "node": node,
+            "dev": dev_id,
+            "mounts": mounts_by_dev.get(dev_id, []),
+            "swap": node in swap_nodes,
+        })
+    return {"ok": True, "complete": True, "devices": devices}
+
+
+def _issue_live_unplug_token(fingerprint: dict) -> str:
+    token = secrets.token_urlsafe(24)
+    now = time.monotonic()
+    with _live_unplug_tokens_lock:
+        expired = [key for key, value in _live_unplug_tokens.items() if value.get("expires_at", 0) <= now]
+        for key in expired:
+            _live_unplug_tokens.pop(key, None)
+        _live_unplug_tokens[token] = {
+            "expires_at": now + LIVE_UNPLUG_TOKEN_SECONDS,
+            "fingerprint": dict(fingerprint),
+        }
+    return token
+
+
+def _consume_live_unplug_token(token: str):
+    now = time.monotonic()
+    with _live_unplug_tokens_lock:
+        entry = _live_unplug_tokens.pop(str(token or ""), None)
+    if not entry or entry.get("expires_at", 0) <= now:
+        return None
+    return entry
+
+
+def _record_disconnect_readiness(result: dict):
+    """Persist a token-free support snapshot that can be collected over SSH."""
+    try:
+        snapshot = json.loads(json.dumps(result or {}))
+        snapshot.pop("token", None)
+        snapshot["recorded_at"] = int(time.time())
+        atomic_write(DISCONNECT_READINESS_PATH, json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
+        DISCONNECT_READINESS_PATH.chmod(0o644)
+        blocker_codes = [str(item.get("code") or "") for item in snapshot.get("blockers", [])]
+        topology = (snapshot.get("checks") or {}).get("usb4_storage_topology") or {}
+        log(
+            "SAFE_DISCONNECT_READINESS "
+            f"ready={bool(snapshot.get('ready'))} "
+            f"root={topology.get('root_pci') or 'unknown'} "
+            f"blockers={','.join(blocker_codes) or 'none'}"
+        )
+    except Exception as e:
+        log(f"SAFE_DISCONNECT_READINESS record failed: {e}")
+
+
+def _wait_for_path_absent(path, timeout_s=6.0, interval_s=0.1) -> bool:
+    deadline = time.monotonic() + max(0.1, float(timeout_s))
+    target = Path(path)
+    while time.monotonic() < deadline:
+        if not target.exists():
+            return True
+        time.sleep(max(0.02, float(interval_s)))
+    return not target.exists()
+
+
+def safe_live_unplug(
+    token: str,
+    sys_pci_root=Path("/sys/bus/pci/devices"),
+    thunderbolt_root=Path("/sys/bus/thunderbolt/devices"),
+) -> dict:
+    """Release the validated GPD G1 subtree after a one-time readiness check."""
+    if not LIVE_UNPLUG_RELEASE_ENABLED:
+        return _disabled_feature(
+            "safe_live_unplug",
+            "Live unplug release is awaiting read-only hardware validation on this Ally X/GPD G1.",
+        )
+    authorization = _consume_live_unplug_token(token)
+    if not authorization:
+        return {
+            "ok": False,
+            "action": "safe_live_unplug",
+            "error_code": "readiness_token_invalid",
+            "error": "Disconnect readiness expired. Run Disconnect Check again.",
+        }
+    if not _begin_operation("safe_live_unplug"):
+        return {"ok": False, "error": "Operation already in progress: " + str(_operation_lock)}
+
+    try:
+        readiness = safe_disconnect_readiness(issue_token=False)
+        if not readiness.get("ready"):
+            return {
+                "ok": False,
+                "action": "safe_live_unplug",
+                "error_code": "readiness_changed",
+                "error": "Disconnect conditions changed. Nothing was removed.",
+                "readiness": readiness,
+            }
+
+        checks = readiness.get("checks") or {}
+        topology = checks.get("usb4_storage_topology") or {}
+        thunderbolt = checks.get("thunderbolt_authorization") or {}
+        tb_device = thunderbolt.get("device") or {}
+        current_fingerprint = {
+            "gpu_pci": (readiness.get("identity") or {}).get("pci"),
+            "root_pci": topology.get("root_pci"),
+            "thunderbolt_id": tb_device.get("id"),
+            "thunderbolt_unique_id": tb_device.get("unique_id"),
+        }
+        if current_fingerprint != authorization.get("fingerprint"):
+            return {
+                "ok": False,
+                "action": "safe_live_unplug",
+                "error_code": "hardware_identity_changed",
+                "error": "The connected USB4 hardware changed. Nothing was removed.",
+            }
+
+        root_pci = str(topology.get("root_pci") or "")
+        remove_path = Path(str(topology.get("remove_path") or ""))
+        expected_remove = Path(sys_pci_root) / root_pci / "remove"
+        if remove_path != expected_remove or not remove_path.exists():
+            return {
+                "ok": False,
+                "action": "safe_live_unplug",
+                "error_code": "remove_path_invalid",
+                "error": "The exact validated PCI removal path is unavailable. Nothing was removed.",
+            }
+
+        authorized_path = Path(str(tb_device.get("authorized_path") or ""))
+        expected_authorized = Path(thunderbolt_root) / str(tb_device.get("id") or "") / "authorized"
+        if authorized_path != expected_authorized or not authorized_path.exists():
+            return {
+                "ok": False,
+                "action": "safe_live_unplug",
+                "error_code": "authorization_path_invalid",
+                "error": "The exact validated USB4 authorization path is unavailable. Nothing was removed.",
+            }
+
+        steps = {}
+        steps["wrapper_config"] = write_gamescope_wrapper_config("*,eDP-1", "disabled")
+        steps["mode_config"] = write_gamescope_mode_config(disabled=True)
+        steps["gamescope_environment"] = update_gamescope_user_environment(unset=["MESA_VK_DEVICE_SELECT"])
+        if not all(step.get("ok") for step in steps.values()):
+            return {
+                "ok": False,
+                "action": "safe_live_unplug",
+                "error_code": "internal_configuration_failed",
+                "error": "Could not lock the next Gamescope session to the internal GPU. Nothing was removed.",
+                "steps": steps,
+            }
+
+        try:
+            os.sync()
+            steps["sync"] = {"ok": True}
+        except Exception as e:
+            return {
+                "ok": False,
+                "action": "safe_live_unplug",
+                "error_code": "sync_failed",
+                "error": f"Filesystem sync failed. Nothing was removed: {e}",
+                "steps": steps,
+            }
+
+        log(f"SAFE_LIVE_UNPLUG removing validated G1 root {root_pci}")
+        try:
+            remove_path.write_text("1")
+            steps["pci_remove"] = {"ok": True, "pci": root_pci}
+        except Exception as e:
+            steps["pci_remove"] = {"ok": False, "pci": root_pci, "error": str(e)}
+            return {
+                "ok": False,
+                "action": "safe_live_unplug",
+                "error_code": "pci_remove_failed",
+                "error": "The G1 PCI subtree could not be released. Keep it connected and shut down normally.",
+                "steps": steps,
+            }
+
+        pci_gone = _wait_for_path_absent(Path(sys_pci_root) / root_pci)
+        steps["pci_disappeared"] = {"ok": pci_gone, "pci": root_pci}
+        if not pci_gone:
+            return {
+                "ok": False,
+                "action": "safe_live_unplug",
+                "error_code": "pci_remove_incomplete",
+                "error": "The G1 PCI subtree did not disappear. Keep it connected and shut down normally.",
+                "steps": steps,
+            }
+
+        try:
+            if authorized_path.exists():
+                authorized_path.write_text("0")
+            deauthorized = (not authorized_path.exists()) or read_text(authorized_path).strip() == "0"
+            steps["usb4_deauthorize"] = {
+                "ok": deauthorized,
+                "device": tb_device.get("id"),
+                "name": tb_device.get("name"),
+            }
+        except Exception as e:
+            deauthorized = False
+            steps["usb4_deauthorize"] = {"ok": False, "error": str(e)}
+
+        after = build_status()
+        internal = after.get("internal_display") or {}
+        internal_ok = after.get("display_target") == "internal" and bool(internal.get("active"))
+        egpu_gone = not bool(after.get("egpu"))
+        safe_to_unplug = bool(pci_gone and deauthorized and internal_ok and egpu_gone)
+        steps["verification"] = {
+            "ok": safe_to_unplug,
+            "internal_active": internal_ok,
+            "egpu_gone": egpu_gone,
+            "usb4_deauthorized": deauthorized,
+        }
+        log(f"SAFE_LIVE_UNPLUG completed safe_to_unplug={safe_to_unplug}")
+        return {
+            "ok": safe_to_unplug,
+            "action": "safe_live_unplug",
+            "safe_to_unplug": safe_to_unplug,
+            "message": (
+                "GPD G1 released. It is now safe to unplug the USB4 cable."
+                if safe_to_unplug
+                else "Release verification failed. Keep the G1 connected and shut down normally."
+            ),
+            "steps": steps,
+        }
+    finally:
+        _end_operation()
+
+
 def safe_disconnect_readiness(
     cards=None,
     status_obj=None,
@@ -806,6 +1300,17 @@ def safe_disconnect_readiness(
     dev_dri_root=Path("/dev/dri"),
     proc_root=Path("/proc"),
     pci_device_path=None,
+    pci_inventory=None,
+    thunderbolt_root=Path("/sys/bus/thunderbolt/devices"),
+    usb_root=Path("/sys/bus/usb/devices"),
+    sound_root=Path("/sys/class/sound"),
+    dev_snd_root=Path("/dev/snd"),
+    block_root=Path("/sys/class/block"),
+    dev_root=Path("/dev"),
+    mountinfo_path=Path("/proc/self/mountinfo"),
+    swaps_path=Path("/proc/swaps"),
+    running_games=None,
+    issue_token=True,
 ) -> dict:
     """Build a read-only, fail-closed report. This function never detaches hardware."""
     inspected_cards = scan_cards() if cards is None else list(cards)
@@ -874,28 +1379,137 @@ def safe_disconnect_readiness(
             "message": "The internal display is not the verified active Gamescope target.",
         })
 
-    # The GPD G1 exposes sibling PCI/USB functions outside the GPU function's
-    # own sysfs subtree. Until their common tunnel root is proven, storage and
-    # mount enumeration is intentionally incomplete and readiness must fail.
-    topology = {
-        "ok": False,
-        "complete": False,
-        "message": "Exact USB4 child PCI, USB, block, filesystem, and mount topology is not yet proven.",
-    }
-    blockers.append({"code": "usb4_topology_incomplete", "message": topology["message"]})
+    inventory = _pci_inventory(sys_pci_root) if pci_inventory is None else list(pci_inventory)
+    topology = _analyze_gpd_g1_topology(identity["pci"], inventory)
+    thunderbolt = {"ok": False, "complete": False, "device": None, "error": "PCI topology is incomplete"}
+    usb_devices = {"ok": False, "complete": False, "devices": [], "error": "PCI topology is incomplete"}
+    block_devices = {"ok": False, "complete": False, "devices": [], "error": "PCI topology is incomplete"}
+    block_clients = {"ok": False, "complete": False, "clients": [], "error": "PCI topology is incomplete"}
+    sound_nodes = {"ok": False, "complete": False, "nodes": [], "error": "PCI topology is incomplete"}
+    sound_clients = {"ok": False, "complete": False, "clients": [], "error": "PCI topology is incomplete"}
+    games = running_games if running_games is not None else _running_steam_games()
+
+    if not topology.get("complete"):
+        blockers.append({
+            "code": "usb4_topology_incomplete",
+            "message": topology.get("error") or "Exact GPD G1 PCI topology could not be proven.",
+        })
+    else:
+        root_path = topology.get("root_path") or ""
+        thunderbolt = _gpd_g1_thunderbolt_device(thunderbolt_root)
+        usb_devices = _usb_devices_under_path(root_path, usb_root)
+        block_devices = _block_devices_under_path(
+            root_path,
+            block_root,
+            dev_root,
+            mountinfo_path,
+            swaps_path,
+        )
+        block_nodes = [item.get("node") for item in block_devices.get("devices", []) if item.get("node")]
+        block_clients = _processes_using_device_nodes(block_nodes, proc_root) if block_devices.get("complete") else {
+            "ok": False,
+            "complete": False,
+            "clients": [],
+            "error": "block client scan skipped because block topology is incomplete",
+        }
+        sound_nodes = _class_nodes_under_path(
+            sound_root,
+            dev_snd_root,
+            root_path,
+            r"(?:controlC[0-9]+|hwC[0-9]+D[0-9]+|pcmC[0-9]+D[0-9]+[pc])",
+        )
+        sound_clients = _processes_using_device_nodes(sound_nodes.get("nodes"), proc_root) if sound_nodes.get("complete") else {
+            "ok": False,
+            "complete": False,
+            "clients": [],
+            "error": "audio client scan skipped because sound topology is incomplete",
+        }
+
+        if not thunderbolt.get("complete"):
+            blockers.append({"code": "usb4_authorization_ambiguous", "message": thunderbolt.get("error")})
+        if not usb_devices.get("complete"):
+            blockers.append({"code": "usb_inventory_incomplete", "message": usb_devices.get("error")})
+        if not block_devices.get("complete"):
+            blockers.append({"code": "storage_inventory_incomplete", "message": block_devices.get("error")})
+        if not block_clients.get("complete"):
+            blockers.append({"code": "storage_client_scan_incomplete", "message": block_clients.get("error")})
+        if block_devices.get("devices"):
+            mounted = sum(len(item.get("mounts") or []) for item in block_devices["devices"])
+            blockers.append({
+                "code": "external_storage_present",
+                "message": (
+                    f"{len(block_devices['devices'])} G1 storage device(s) detected"
+                    + (f", including {mounted} mounted filesystem(s)" if mounted else "")
+                    + ". Disconnect external storage before live unplug."
+                ),
+            })
+        if block_clients.get("clients"):
+            blockers.append({
+                "code": "external_storage_in_use",
+                "message": f"{len(block_clients['clients'])} process(es) still have G1 storage open.",
+            })
+        if not sound_nodes.get("complete") or not sound_clients.get("complete"):
+            blockers.append({
+                "code": "audio_client_scan_incomplete",
+                "message": sound_nodes.get("error") or sound_clients.get("error"),
+            })
+        active_pcm_clients = [
+            client for client in sound_clients.get("clients", [])
+            if any(Path(node).name.startswith("pcm") for node in client.get("nodes", []))
+        ]
+        if active_pcm_clients:
+            blockers.append({
+                "code": "egpu_audio_in_use",
+                "message": f"{len(active_pcm_clients)} process(es) are actively using G1 HDMI audio.",
+            })
+        sound_clients["active_pcm_clients"] = active_pcm_clients
+
+    if not games.get("ok"):
+        blockers.append({
+            "code": "running_game_check_failed",
+            "message": "Could not prove that all Steam games are closed.",
+        })
+    elif games.get("games"):
+        blockers.append({
+            "code": "running_game",
+            "message": f"Close {len(games['games'])} running Steam game(s) before live unplug.",
+        })
+
+    ready = not blockers
+    token = None
+    token_expires_in = 0
+    if ready and issue_token:
+        tb_device = thunderbolt.get("device") or {}
+        token = _issue_live_unplug_token({
+            "gpu_pci": identity["pci"],
+            "root_pci": topology.get("root_pci"),
+            "thunderbolt_id": tb_device.get("id"),
+            "thunderbolt_unique_id": tb_device.get("unique_id"),
+        })
+        token_expires_in = int(LIVE_UNPLUG_TOKEN_SECONDS)
 
     return {
         "ok": True,
         "action": "safe_disconnect_readiness",
-        "ready": False,
+        "ready": ready,
         "read_only": True,
+        "release_enabled": LIVE_UNPLUG_RELEASE_ENABLED,
         "identity": identity,
         "candidate_count": 1,
+        "token": token,
+        "token_expires_in_seconds": token_expires_in,
         "checks": {
             "display": display_check,
             "drm_nodes": drm_nodes,
             "drm_clients": clients,
             "usb4_storage_topology": topology,
+            "thunderbolt_authorization": thunderbolt,
+            "usb_devices": usb_devices,
+            "block_devices": block_devices,
+            "block_clients": block_clients,
+            "sound_nodes": sound_nodes,
+            "sound_clients": sound_clients,
+            "running_games": games,
         },
         "blockers": blockers,
     }
@@ -5031,7 +5645,15 @@ class Plugin:
     @staticmethod
     async def safe_disconnect_readiness(*args, **kwargs):
         log("UI_CALL safe_disconnect_readiness")
-        return safe_disconnect_readiness()
+        result = safe_disconnect_readiness()
+        _record_disconnect_readiness(result)
+        return result
+
+    @staticmethod
+    async def safe_live_unplug(*args, **kwargs):
+        log("UI_CALL safe_live_unplug")
+        token = _decky_str(args, kwargs, "token", "")
+        return safe_live_unplug(token)
 
     @staticmethod
     async def safe_reconnect(*args, **kwargs):  # orphaned: not called from frontend

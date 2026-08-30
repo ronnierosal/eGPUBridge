@@ -472,6 +472,19 @@ class MissingEgpuRecoveryTests(unittest.TestCase):
 
 
 class ResumeRecoveryTests(unittest.TestCase):
+    def test_login1_prepare_for_sleep_signal_parser(self):
+        self.assertTrue(
+            main._parse_prepare_for_sleep_signal(
+                "/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (true,)"
+            )
+        )
+        self.assertFalse(
+            main._parse_prepare_for_sleep_signal(
+                "/org/freedesktop/login1: org.freedesktop.login1.Manager.PrepareForSleep (false,)"
+            )
+        )
+        self.assertIsNone(main._parse_prepare_for_sleep_signal("PreparingForSleep: true"))
+
     def test_resume_watcher_detects_a_short_s2idle_cycle(self):
         stop_event = mock.Mock()
         stop_event.wait.side_effect = [False, True]
@@ -486,7 +499,9 @@ class ResumeRecoveryTests(unittest.TestCase):
             main.time, "monotonic", side_effect=[50.0, 51.0]
         ), mock.patch.object(main, "_write_resume_state") as state_mock, mock.patch.object(
             main, "_recover_after_resume"
-        ) as recover_mock:
+        ) as recover_mock, mock.patch.object(
+            main, "_resume_last_detection_monotonic", 0.0
+        ):
             main._resume_watcher_loop(stop_event)
 
         state_mock.assert_called_once_with(
@@ -497,6 +512,29 @@ class ResumeRecoveryTests(unittest.TestCase):
             },
         )
         recover_mock.assert_called_once_with(stop_event=stop_event)
+
+    def test_direct_and_fallback_resume_detections_are_debounced(self):
+        with mock.patch.object(
+            main, "_resume_last_detection_monotonic", 0.0
+        ), mock.patch.object(main, "_write_resume_state") as state_mock, mock.patch.object(
+            main, "_recover_after_resume", return_value={"ok": True}
+        ) as recover_mock:
+            first = main._handle_resume_detection(
+                "login1_prepare_for_sleep",
+                suspended_seconds=0.2,
+                detected_monotonic=100.0,
+            )
+            duplicate = main._handle_resume_detection(
+                "boottime_monotonic_gap",
+                suspended_seconds=1.1,
+                detected_monotonic=101.0,
+            )
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(duplicate["skipped"])
+        self.assertEqual(duplicate["reason"], "duplicate_resume_detection")
+        state_mock.assert_called_once()
+        recover_mock.assert_called_once()
 
     def test_resume_recovery_cancels_cleanly_during_plugin_unload(self):
         stop_event = mock.Mock()

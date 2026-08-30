@@ -467,10 +467,11 @@ starts with `-O *,eDP-1`, clears its Mesa device selector, and drops the externa
 mode override. Plugin startup then persists that verified internal failback and
 clears the user-manager selector.
 
-The plugin now prefers Linux boot-time versus monotonic clocks to detect suspend,
-with wall time as a compatibility fallback. A one-second minimum gap distinguishes
-suspend from ordinary scheduling stalls while still capturing short `s2idle`
-cycles.
+The plugin now monitors logind's native `PrepareForSleep` signal and retains the
+Linux boot-time versus monotonic gap as a fallback. The direct signal covers
+sub-second hardware sleep cycles that cannot be distinguished reliably by timing.
+A short debounce prevents the native event and timing fallback from performing
+duplicate recovery.
 On resume it waits up to twenty seconds for the exact configured vendor/device to
 re-enumerate. If it returns, the external configuration is left untouched. If it
 remains absent, the observer persists internal configuration, clears the user
@@ -482,19 +483,34 @@ The first attached-G1 test entered `s2idle` twice but resumed after approximatel
 four seconds each time. Both resumes coincided with PCIe AER traffic on the G1's
 Titan Ridge path, xHCI recovery failure at `0000:09:00.0`, and spurious PCIe PME
 interrupts. The Ally USB4 tunnel at `0000:00:03.1` and the G1 xHCI controller at
-`0000:09:00.0` were wake-enabled. This strongly motivates a controlled wake-source
-isolation test but does not yet prove which device initiated the resume. The
-original five-second observer threshold missed these cycles; it is now one second
-and uses the suspend-aware boot-time clock when available.
+`0000:09:00.0` were wake-enabled. These initial results motivated the controlled
+wake-source isolation summarized below. The original five-second observer
+threshold missed the shortest cycles; the timing fallback is now one second and
+uses the suspend-aware boot-time clock when available.
+
+Wake-source isolation disabled the Ally USB4 bridge at `0000:00:03.1` and G1 xHCI
+controller at `0000:09:00.0` separately and together. The attached system still
+resumed immediately in all three cases. SteamOS reported a successful suspend,
+approximately 0.137 seconds of hardware sleep, and ACPI wake IRQ 9. With the G1
+powered off and disconnected, the Ally remained asleep for approximately 50
+seconds until the operator pressed its power button; the wake IRQ then changed to
+7. Gamescope remained internal and Decky stayed active. This confirms the attached
+G1/USB4 power-delivery or embedded-controller path as the trigger category, while
+also showing that the PCI wake-permission toggles are not a valid workaround.
 
 Remaining acceptance criteria:
 
-- Isolate the immediate wake source with temporary, reversible wake-source changes.
-- Revalidate suspend/resume with the G1 remaining attached and powered after the
-  observer threshold fix.
-- Validate waking after the G1 is powered off or removed during sleep.
+- Hardware-validate that the direct `PrepareForSleep` monitor records a sub-second
+  attached-G1 cycle without duplicate recovery from the timing fallback.
+- Determine whether an Ally/G1 firmware, embedded-controller, or power-delivery
+  update can prevent the ACPI wake while the G1 remains attached.
+- Surface a clear attached-G1 sleep compatibility warning; do not silently change
+  kernel wake permissions that hardware testing showed were ineffective.
+- Only test removing the G1 during sleep after the platform can sustain attached
+  sleep; the current immediate ACPI wake prevents that scenario.
 - Hardware-validate that slow G1 enumeration is not mistaken for removal.
-- Verify the compact resume record across both attached and absent-device cases.
+- Verify the compact resume record for an externally configured absent-device case;
+  the internal/no-G1 resume case is hardware-validated.
 - Always prefer a working internal display over automatic return to the eGPU;
   switching external again can remain a deliberate user action.
 

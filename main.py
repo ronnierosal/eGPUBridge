@@ -5,6 +5,7 @@ import time
 import signal
 import shutil
 import subprocess
+import select
 import base64
 import zlib
 import ipaddress
@@ -3809,9 +3810,13 @@ _display_restart_jobs = {}
 _display_restart_jobs_lock = threading.Lock()
 _resume_watcher_stop = None
 _resume_watcher_thread = None
+_resume_signal_thread = None
 _resume_recovery_lock = threading.Lock()
+_resume_detection_lock = threading.Lock()
+_resume_last_detection_monotonic = 0.0
 RESUME_POLL_INTERVAL_SECONDS = 2.0
 RESUME_GAP_THRESHOLD_SECONDS = 1.0
+RESUME_DETECTION_DEBOUNCE_SECONDS = 5.0
 
 
 def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: float = 1.0) -> dict:
@@ -3996,6 +4001,118 @@ def _suspend_inclusive_clock():
     return time.time(), "wall_monotonic_gap"
 
 
+def _handle_resume_detection(
+    source: str,
+    suspended_seconds=None,
+    stop_event=None,
+    detected_monotonic=None,
+) -> dict:
+    """Record and recover once when direct and fallback observers see one resume."""
+    global _resume_last_detection_monotonic
+    detected_at = (
+        float(detected_monotonic)
+        if detected_monotonic is not None
+        else time.monotonic()
+    )
+    with _resume_detection_lock:
+        since_last = detected_at - _resume_last_detection_monotonic
+        if _resume_last_detection_monotonic and since_last < RESUME_DETECTION_DEBOUNCE_SECONDS:
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "duplicate_resume_detection",
+                "source": str(source),
+            }
+        _resume_last_detection_monotonic = detected_at
+
+    details = {"source": str(source)}
+    if suspended_seconds is not None:
+        details["suspended_seconds"] = round(max(0.0, float(suspended_seconds)), 3)
+    _write_resume_state("resume_detected", details)
+    try:
+        return _recover_after_resume(stop_event=stop_event)
+    except Exception as e:
+        return _write_resume_state("resume_recovery_failed", {"error": str(e)[:500]})
+
+
+def _parse_prepare_for_sleep_signal(line: str):
+    """Parse gdbus monitor output for login1 Manager.PrepareForSleep."""
+    value = str(line or "").strip().lower()
+    if "prepareforsleep" not in value:
+        return None
+    match = re.search(r"\b(true|false)\b", value)
+    if not match:
+        return None
+    return match.group(1) == "true"
+
+
+def _login1_sleep_monitor_loop(stop_event):
+    """Use logind's direct sleep signal so sub-second s2idle cycles are visible."""
+    command = [
+        "/usr/bin/gdbus",
+        "monitor",
+        "--system",
+        "--dest",
+        "org.freedesktop.login1",
+        "--object-path",
+        "/org/freedesktop/login1",
+    ]
+    if not Path(command[0]).exists():
+        log("LOGIN1_SLEEP_MONITOR unavailable: /usr/bin/gdbus missing")
+        return
+
+    while not stop_event.is_set():
+        process = None
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=_system_subprocess_env(),
+            )
+            log("LOGIN1_SLEEP_MONITOR started")
+            preparing_at = None
+            while not stop_event.is_set() and process.poll() is None:
+                readable, _, _ = select.select([process.stdout], [], [], 0.5)
+                if not readable:
+                    continue
+                line = process.stdout.readline()
+                if not line:
+                    continue
+                preparing = _parse_prepare_for_sleep_signal(line)
+                if preparing is True:
+                    preparing_at, clock_source = _suspend_inclusive_clock()
+                    _write_resume_state(
+                        "suspend_preparing",
+                        {"source": "login1_prepare_for_sleep", "clock": clock_source},
+                    )
+                elif preparing is False:
+                    now_inclusive, _ = _suspend_inclusive_clock()
+                    duration = None if preparing_at is None else now_inclusive - preparing_at
+                    _handle_resume_detection(
+                        "login1_prepare_for_sleep",
+                        suspended_seconds=duration,
+                        stop_event=stop_event,
+                    )
+                    preparing_at = None
+        except Exception as e:
+            log(f"LOGIN1_SLEEP_MONITOR error: {e}")
+        finally:
+            if process is not None and process.poll() is None:
+                try:
+                    process.terminate()
+                    process.wait(timeout=1.0)
+                except Exception:
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
+        if not stop_event.wait(2.0):
+            log("LOGIN1_SLEEP_MONITOR restarting")
+
+
 def _resume_watcher_loop(stop_event):
     last_inclusive, clock_source = _suspend_inclusive_clock()
     last_monotonic = time.monotonic()
@@ -4014,21 +4131,16 @@ def _resume_watcher_loop(stop_event):
         last_monotonic = now_monotonic
         if suspended_seconds < RESUME_GAP_THRESHOLD_SECONDS:
             continue
-        _write_resume_state(
-            "resume_detected",
-            {
-                "source": clock_source,
-                "suspended_seconds": round(suspended_seconds, 3),
-            },
+        _handle_resume_detection(
+            clock_source,
+            suspended_seconds=suspended_seconds,
+            stop_event=stop_event,
+            detected_monotonic=now_monotonic,
         )
-        try:
-            _recover_after_resume(stop_event=stop_event)
-        except Exception as e:
-            _write_resume_state("resume_recovery_failed", {"error": str(e)[:500]})
 
 
 def _start_resume_watcher() -> bool:
-    global _resume_watcher_stop, _resume_watcher_thread
+    global _resume_watcher_stop, _resume_watcher_thread, _resume_signal_thread
     if _resume_watcher_thread is not None and _resume_watcher_thread.is_alive():
         return True
     _resume_watcher_stop = threading.Event()
@@ -4038,19 +4150,29 @@ def _start_resume_watcher() -> bool:
         name="egpubridge-resume-watcher",
         daemon=True,
     )
+    _resume_signal_thread = threading.Thread(
+        target=_login1_sleep_monitor_loop,
+        args=(_resume_watcher_stop,),
+        name="egpubridge-login1-sleep-monitor",
+        daemon=True,
+    )
     _resume_watcher_thread.start()
+    _resume_signal_thread.start()
     log("RESUME_WATCHER started")
     return True
 
 
 def _stop_resume_watcher() -> bool:
-    global _resume_watcher_stop, _resume_watcher_thread
+    global _resume_watcher_stop, _resume_watcher_thread, _resume_signal_thread
     if _resume_watcher_stop is not None:
         _resume_watcher_stop.set()
     if _resume_watcher_thread is not None and _resume_watcher_thread.is_alive():
         _resume_watcher_thread.join(timeout=3.0)
+    if _resume_signal_thread is not None and _resume_signal_thread.is_alive():
+        _resume_signal_thread.join(timeout=3.0)
     _resume_watcher_stop = None
     _resume_watcher_thread = None
+    _resume_signal_thread = None
     log("RESUME_WATCHER stopped")
     return True
 

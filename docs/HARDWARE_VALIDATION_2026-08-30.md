@@ -82,8 +82,20 @@ path reported `BadTLP`, non-fatal `ACSViol`, failed xHCI recovery at
 `0000:09:00.0`, and spurious PCIe PME interrupts. The Ally USB4 tunnel
 `0000:00:03.1` and G1 Titan Ridge xHCI controller `0000:09:00.0` were both
 wake-enabled. This identifies the USB4 path as the leading area for controlled
-wake-source isolation, but the initiating device is not yet proven. It also
-exposed and led to a fix for the resume observer's former five-second threshold.
+wake-source isolation; at that stage the initiating category was not yet proven.
+It also exposed and led to a fix for the resume observer's former five-second
+threshold.
+
+Follow-up isolation disabled the G1 xHCI wake permission, the Ally USB4 bridge
+wake permission, and then both simultaneously. All three attached-G1 attempts
+still resumed immediately. Suspend statistics showed no failures, only about
+0.137 seconds of hardware sleep, and ACPI wake IRQ 9. After switching Gamescope
+to `*,eDP-1`, powering off and disconnecting the G1 allowed approximately 50
+seconds of hardware sleep until the operator pressed the Ally power button; wake
+IRQ then changed to 7. Decky remained active, Gamescope stayed internal, and the
+resume observer recorded `resume_no_external_configuration`. The attached
+G1/USB4 power-delivery or embedded-controller path is therefore the confirmed
+trigger category, while the two tested PCI wake toggles are ineffective.
 
 Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
 The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and

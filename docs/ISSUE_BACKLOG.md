@@ -456,6 +456,12 @@ uncorrectable `ACSViol` events on `0000:05:02.0`. The attached xHCI device at
 the RX 7600M XT rendered a game at a reported steady 60 FPS, so this is a link
 health warning rather than a reproduced display-switch failure.
 
+The combined reliability/native-stage-2 build reproduced the same warning family
+during a later successful external/internal round trip. The external transition
+completed in approximately 5.93 seconds and the internal transition in 4.44
+seconds while Gamescope remained usable. EGB-023 therefore remains open even
+though the integrated switching gate passed.
+
 Before changing kernel settings, repeat the test with the cable reseated, a
 known-certified USB4 cable, and the other Ally USB4 port. Diagnostics should
 count AER events by severity, BDF, and error type; identify the affected parent

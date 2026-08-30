@@ -39,7 +39,7 @@ platform-specific.
 | Device / setup | Status |
 |---|---|
 | Lenovo Legion Go S + AMD RX 9070 + ASMedia USB4 | Tested by the upstream author |
-| ASUS ROG Ally X + GPD G1 | Targeted by this fork; on-device validation still required |
+| ASUS ROG Ally X + GPD G1 | Initial on-device external/internal switching validation passed; extended reliability testing remains |
 | Other AMD handheld/eGPU combinations | Expected to work through runtime DRM discovery; unverified |
 | NVIDIA eGPUs | Telemetry only; driver and PCI mutation are disabled |
 
@@ -165,8 +165,10 @@ If the G1 is detected but the TV stays dark:
 This fork sets `MESA_VK_DEVICE_SELECT=<AMD vendor:device>` before restarting Gamescope and
 unsets it when restoring the internal display. It records the transition, waits for a new
 Gamescope PID with the exact requested arguments, and keeps the internal panel enabled if
-verification fails. That addresses the regression reported in upstream issue #2, but
-hardware confirmation is still needed on the GPD G1.
+verification fails. The combined reliability and native-Decky stage 2 build completed a
+supervised GPD G1 external/internal round trip on a ROG Ally X. Repeated cycles, controlled
+rollback, cable/port comparisons, audio, HDR, and running-game protection still require
+hardware validation.
 
 ## License
 

@@ -16,6 +16,10 @@ Native-handoff follow-up capture: `test-results/20260830-132108/`
 Native confirmation follow-up capture: `test-results/20260830-133757/`
 (intentionally ignored by Git).
 
+Combined reliability/native-stage-2 round-trip capture:
+`test-results/20260830-163425/`, with final state snapshot in
+`test-results/20260830-163744/` (intentionally ignored by Git).
+
 ## Result
 
 Primary display switching passed:
@@ -58,6 +62,15 @@ invisible even with a three-second delay. Because the modal provides the warning
 before any mutation and passed on hardware, the toast dependency was removed and
 the one-second asynchronous RPC delay restored.
 
+The combined `codex/core-native-stage2` build then completed an external/internal
+round trip after the deployment harness was hardened against Windows CRLF shell
+scripts. The external transition selected `HDMI-A-1`, bound Gamescope to
+`1002:7480`, persisted the exact G1 identity, and completed in approximately 5.93
+seconds. The operator confirmed TV output. The return transition selected
+`*,eDP-1`, removed the eGPU preference, and completed in approximately 4.44
+seconds; the operator confirmed the Ally panel returned. Gamescope remained
+active and the G1 remained present with the AMDGPU driver attached.
+
 ## Findings requiring follow-up
 
 The successful user-visible result does not make the full hardware path clean.
@@ -75,6 +88,12 @@ The PCIe AER events affected the G1 USB4/Thunderbolt topology while output and
 rendering continued. This should first be compared using a reseated cable, a
 known-certified USB4 cable, and the Ally's other USB4 port before considering any
 kernel workaround.
+
+The combined-build round trip reproduced the same link warnings on the external
+and internal sides of the handoff: correctable `BadDLLP` reports on the Intel
+`15ef` bridge, non-fatal `ACSViol`, and failed xHCI recovery for `0000:09:00.0`.
+Both user-visible transitions still completed. This confirms EGB-023 remains an
+independent USB4/PCIe link-health investigation rather than a transition failure.
 
 An attached-G1 suspend test later entered `s2idle` at 13:53:56 and 13:54:11, then
 resumed about four seconds after each attempt without operator input. The resume
@@ -190,8 +209,10 @@ remaining asynchronous handoff work in EGB-002.
 - Verify idempotency: requesting the already-active target must skip the restart.
 - Verify running-game protection rather than overriding it during normal use.
 - Exercise timeout and rollback behavior in a controlled failure test.
-- Re-run after EGB-023 through EGB-027 improvements are deployed.
+- Re-run after EGB-023 link-health diagnostics are implemented and compare the
+  warning rate across cables and both Ally USB4 ports.
 
-Conclusion: the fork's primary Ally X/GPD G1 switching path passed its first live
-test. It is ready for focused follow-up testing, not yet for a claim of complete
-hardware validation or a broad upstream release.
+Conclusion: the fork's primary Ally X/GPD G1 switching path and the combined
+reliability/native-stage-2 build both passed supervised live external/internal
+round trips. The fork is ready for focused follow-up testing, not yet for a claim
+of complete hardware validation or a broad upstream release.

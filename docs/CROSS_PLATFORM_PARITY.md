@@ -78,7 +78,7 @@ Status meanings:
 | EGB-C05 | Idempotent switching | Available* | Planned | Skip an operation when the requested exact state is already live. |
 | EGB-C06 | Running-game guard | Available* | Planned | Block disruptive switching unless the user explicitly confirms. |
 | EGB-C07 | Verified transition and rollback | Partial | Partial | Replace fixed delays with bounded readiness checks and restore the prior state on failure. |
-| EGB-C08 | Exact GPD G1 identity | Available* | Planned | Bind behavior to PCI/device/topology identity, never “first secondary GPU.” |
+| EGB-C08 | Exact GPD G1 identity | Available | Planned | Bind behavior to PCI/device/topology identity, never “first secondary GPU.” |
 | EGB-C09 | Hot-plug arrival/removal events | Partial | Planned | Record device events; do not auto-switch until manual flow is reliable. |
 | EGB-C10 | Structured troubleshooting logs | Available | Available* | Use the shared event names below and retain platform-native evidence. |
 | EGB-C11 | Redacted support export | Available | Available* | Redact local user, host, network, and device-serial identifiers by default. |

@@ -675,6 +675,20 @@ The deployed build passed the hot-reconnect check while the operator remained on
 the eGPUBridge page. The G1 appeared automatically within the five-second polling
 window, and the manual Refresh button was not needed.
 
+### EGB-034 - Preserve Linux line endings in deployment packages
+
+Status: Implemented after failed combined-build transition on 2026-08-30
+
+A Windows deployment packaged `bin/gamescope` with CRLF line endings. SteamOS
+then interpreted its shebang as `/bin/bash^M`, causing every Gamescope restart to
+fail with status 126. The display rollback restored internal configuration, but
+could not restart the session while the wrapper remained unexecutable.
+
+The repository now enforces LF for the Gamescope wrapper and shell scripts. The
+remote deploy transaction also normalizes staged executables and rejects any file
+whose first line still contains a carriage return before replacing the active
+plugin. Regression tests lock both boundaries.
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.
@@ -690,7 +704,7 @@ window, and the manual Refresh button was not needed.
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Seventy-two deterministic backend tests and CI checks are passing locally.
+- Seventy-four deterministic backend tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 

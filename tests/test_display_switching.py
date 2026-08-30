@@ -47,6 +47,23 @@ class RemoteHarnessTests(unittest.TestCase):
         self.assertNotIn('STAGING="`$PLUGIN_DIR.staging-`$STAMP"', deploy)
         self.assertIn("egpu_identity.json", deploy)
 
+    def test_deployment_normalizes_shell_executables_before_plugin_swap(self):
+        harness = (Path(__file__).parents[1] / "scripts" / "ally-remote-test.ps1").read_text()
+        deploy_start = harness.index("function Invoke-Deploy")
+        deploy = harness[deploy_start:]
+
+        normalize = "sed -i 's/\\r`$//' \"`$executable\""
+        swap = 'if test -d "`$PLUGIN_DIR"; then mv "`$PLUGIN_DIR" "`$BACKUP"; fi'
+        self.assertIn(normalize, deploy)
+        self.assertIn("Refusing deployment: CRLF remains in executable", deploy)
+        self.assertLess(deploy.index(normalize), deploy.index(swap))
+
+    def test_gamescope_wrapper_is_stored_with_linux_line_endings(self):
+        wrapper = (Path(__file__).parents[1] / "bin" / "gamescope").read_bytes()
+
+        self.assertTrue(wrapper.startswith(b"#!/bin/bash\n"))
+        self.assertNotIn(b"\r\n", wrapper)
+
     def test_live_capture_suppresses_repetitive_smu_metrics_flood(self):
         harness = (Path(__file__).parents[1] / "scripts" / "ally-remote-test.ps1").read_text()
 

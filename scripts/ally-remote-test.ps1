@@ -400,6 +400,14 @@ mkdir -p "`$BACKUP_ROOT"
 rm -rf "`$STAGING"
 mkdir "`$STAGING"
 tar -xzf "`$ARCHIVE" -C "`$STAGING"
+for executable in "`$STAGING/bin/gamescope" "`$STAGING/bin/"*.sh; do
+  test -f "`$executable" || continue
+  sed -i 's/\r`$//' "`$executable"
+  if head -n 1 "`$executable" | grep -q "`$(printf '\r')"; then
+    echo "Refusing deployment: CRLF remains in executable `$(basename "`$executable")" >&2
+    exit 1
+  fi
+done
 if test -d "`$PLUGIN_DIR"; then mv "`$PLUGIN_DIR" "`$BACKUP"; fi
 mv "`$STAGING" "`$PLUGIN_DIR"
 if test -d "`$BACKUP"; then

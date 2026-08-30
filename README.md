@@ -119,13 +119,11 @@ eGPUBridge/
 ├── main.py             # Backend (Python, Decky Plugin class)
 ├── package.json        # Decky plugin metadata
 ├── plugin.json         # Decky plugin config
-├── bin/                # Shell scripts (auto-detect, shutdown)
-│   ├── egpubridge-auto.sh
-│   ├── egpubridge-shutdown.sh
+├── bin/                # Runtime helpers and bundled Android tools
 │   ├── gamescope                 # Small argument-injection shim
-│   ├── gamescope-session-egpubridge
 │   └── platform-tools/ # ADB, fastboot
-└── LICENSE
+├── scripts/            # Build checks and Windows SSH test harness
+└── docs/               # Issue backlog and remote-test instructions
 ```
 
 ## Contributing
@@ -136,6 +134,10 @@ eGPUBridge/
 4. Run the build, contract check, and regression tests
 5. Test on Steam Deck or compatible device
 6. Submit a Pull Request
+
+Remote Ally deployment and log capture are documented in
+[`docs/REMOTE_TESTING.md`](docs/REMOTE_TESTING.md). Bundled binary provenance is
+recorded in [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md).
 
 ## ROG Ally X + GPD G1 troubleshooting
 

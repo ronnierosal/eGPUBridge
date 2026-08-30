@@ -53,7 +53,22 @@ jobs:
         run: node --check dist/index.js
 
       - name: Check shell syntax
-        run: bash -n bin/*.sh bin/gamescope bin/gamescope-session-egpubridge bin/egb-copy-report
+        run: bash -n bin/gamescope
+
+      - name: Check PowerShell remote-test harness syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/ally-remote-test.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count) {
+            $errors | Format-List
+            exit 1
+          }
 
       - name: Smoke test Gamescope argument shim
         run: |

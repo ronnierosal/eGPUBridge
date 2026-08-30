@@ -28,7 +28,7 @@ verifies the new live Gamescope command line before disabling the internal panel
 Relevant code:
 
 - [`main.py`](../main.py#L3133)
-- [`bin/gamescope-session-egpubridge`](../bin/gamescope-session-egpubridge)
+- [`bin/gamescope`](../bin/gamescope)
 
 Acceptance criteria:
 
@@ -206,10 +206,15 @@ runtime directory, and plugin directory, then pass it to every subsystem.
 
 ### EGB-012 - Redact diagnostics by default
 
-Status: Open
+Status: Implemented in `codex/remote-test-harness`; review pending
 
 Diagnostic reports currently include TV IP/MAC configuration and broad journal
 content. Redact local identifiers by default and make inclusion explicit.
+
+Diagnostic JSON, recent-event output, and encoded support reports now redact
+hostname, home username, IPv4 addresses, and MAC addresses by default. The
+Windows SSH harness applies the same policy to saved captures unless the operator
+explicitly supplies `-IncludeSensitive`.
 
 Relevant code: [`main.py`](../main.py#L4495)
 
@@ -240,13 +245,13 @@ The bundled wrapper is a complete distribution session script and can drift from
 SteamOS. It also contains unrelated low-disk cleanup logic. Replace it with the
 smallest supported integration layer or environment/drop-in mechanism.
 
-Relevant code: [`bin/gamescope-session-egpubridge`](../bin/gamescope-session-egpubridge)
+Relevant code: [`bin/gamescope`](../bin/gamescope)
 
 ## P3 - verification and release hygiene
 
 ### EGB-016 - Expand deterministic tests
 
-Status: In progress - deterministic coverage expanded from 7 to 20 tests
+Status: In progress - deterministic coverage expanded from 7 to 24 tests
 
 Add tests for exact device selection, topology-safe disconnect, transition-state
 recovery, reload idempotency, connector detection failures, tuning bounds,
@@ -254,10 +259,15 @@ partial-write failures, redaction, and packaging.
 
 ### EGB-017 - Improve release provenance
 
-Status: Open
+Status: Implemented in `codex/remote-test-harness`; review pending
 
 Publish once per tag, verify tag/version consistency, add checksums, and document
 the source/version of bundled Android platform tools.
+
+The release workflow now creates each release in one upload step, validates the
+tag against the package version, fails on missing artifacts, and publishes a
+SHA-256 checksum. `docs/THIRD_PARTY.md` records Android Platform-Tools provenance
+and the package check requires its recorded revision and notice.
 
 ### EGB-018 - Modernize the frontend with Decky UI and Decky API
 
@@ -324,7 +334,9 @@ Relevant code: [`src/index.tsx`](../src/index.tsx)
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Twenty deterministic tests and CI checks are passing locally.
+- Twenty-four deterministic tests and CI checks are passing locally.
+- A Windows SSH harness can deploy with rollback backup, capture before/live/after
+  evidence, and redact saved reports without installing Codex on the target.
 
 These changes still require a ROG Ally X plus GPD G1 hardware run before being
 considered verified.

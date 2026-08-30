@@ -338,7 +338,7 @@ function Invoke-Deploy {
     if (-not $pnpmCommand) {
         $codexPnpm = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback\pnpm.cmd"
         if (Test-Path -LiteralPath $codexPnpm -PathType Leaf) {
-            $pnpmCommand = Get-Item -LiteralPath $codexPnpm
+            $pnpmCommand = Get-Command -Name $codexPnpm -ErrorAction Stop
         }
     }
     if (-not $pnpmCommand) {

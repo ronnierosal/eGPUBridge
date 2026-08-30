@@ -1,7 +1,13 @@
 import fs from "node:fs";
 
-for (const path of ["dist/index.js", "dist/index.js.map"]) {
-  const original = fs.readFileSync(path, "utf8");
-  const normalized = `${original.replace(/[ \t]+$/gm, "").trimEnd()}\n`;
-  if (normalized !== original) fs.writeFileSync(path, normalized, "utf8");
-}
+const bundlePath = "dist/index.js";
+const bundle = fs.readFileSync(bundlePath, "utf8");
+const normalizedBundle = `${bundle.replace(/[ \t]+$/gm, "").trimEnd()}\n`;
+if (normalizedBundle !== bundle) fs.writeFileSync(bundlePath, normalizedBundle, "utf8");
+
+const mapPath = "dist/index.js.map";
+const sourceMap = JSON.parse(fs.readFileSync(mapPath, "utf8"));
+sourceMap.sourcesContent = (sourceMap.sourcesContent || []).map((content) =>
+  typeof content === "string" ? content.replace(/\r\n?/g, "\n") : content,
+);
+fs.writeFileSync(mapPath, `${JSON.stringify(sourceMap)}\n`, "utf8");

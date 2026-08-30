@@ -256,7 +256,22 @@ read_gamescope_env() {
 
 # eGPUBridge output order control
 EGPUBRIDGE_OUTPUT_ORDER="*,eDP-1"
-EGPUBRIDGE_OUTPUT_CONF="/home/deck/homebrew/plugins/eGPUBridge/output_order.conf"
+EGPUBRIDGE_PLUGIN_DIR="${DECKY_PLUGIN_DIR:-}"
+if [ -z "$EGPUBRIDGE_PLUGIN_DIR" ]; then
+    script_plugin_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+    if [ -f "$script_plugin_dir/plugin.json" ]; then
+        EGPUBRIDGE_PLUGIN_DIR="$script_plugin_dir"
+    else
+        for plugin_candidate in /home/*/homebrew/plugins/eGPUBridge; do
+            if [ -f "$plugin_candidate/plugin.json" ]; then
+                EGPUBRIDGE_PLUGIN_DIR="$plugin_candidate"
+                break
+            fi
+        done
+    fi
+fi
+EGPUBRIDGE_PLUGIN_DIR="${EGPUBRIDGE_PLUGIN_DIR:-/home/deck/homebrew/plugins/eGPUBridge}"
+EGPUBRIDGE_OUTPUT_CONF="$EGPUBRIDGE_PLUGIN_DIR/output_order.conf"
 if [ -f "$EGPUBRIDGE_OUTPUT_CONF" ]; then
     candidate="$(cat "$EGPUBRIDGE_OUTPUT_CONF" | head -n 1 | tr -d '[:space:]')"
     case "$candidate" in
@@ -272,7 +287,7 @@ export EGPUBRIDGE_OUTPUT_ORDER
 
 # eGPUBridge optional Vulkan device preference
 EGPUBRIDGE_PREFER_VK_DEVICE=""
-EGPUBRIDGE_VK_CONF="/home/deck/homebrew/plugins/eGPUBridge/prefer_vk_device.conf"
+EGPUBRIDGE_VK_CONF="$EGPUBRIDGE_PLUGIN_DIR/prefer_vk_device.conf"
 if [ -f "$EGPUBRIDGE_VK_CONF" ]; then
     vk_candidate="$(cat "$EGPUBRIDGE_VK_CONF" | head -n 1 | tr -d '[:space:]')"
     case "$vk_candidate" in
@@ -301,7 +316,7 @@ export EGPUBRIDGE_PREFER_VK_DEVICE
 # eGPUBridge optional Gamescope output mode control
 # Config format: disabled OR 3840x2160@60 OR 2560x1440@120 OR 1920x1080@60
 EGPUBRIDGE_MODE_ARGS=""
-EGPUBRIDGE_MODE_CONF="/home/deck/homebrew/plugins/eGPUBridge/gamescope_mode.conf"
+EGPUBRIDGE_MODE_CONF="$EGPUBRIDGE_PLUGIN_DIR/gamescope_mode.conf"
 if [ -f "$EGPUBRIDGE_MODE_CONF" ]; then
     mode_candidate="$(cat "$EGPUBRIDGE_MODE_CONF" | head -n 1 | tr -d '[:space:]')"
     case "$mode_candidate" in

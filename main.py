@@ -16,7 +16,7 @@ except Exception:
     decky_plugin = None
 
 
-VERSION = "0.3.alfa"
+VERSION = "0.3.1"
 
 GAMESCOPE_SESSION = Path("/usr/lib/steamos/gamescope-session")
 BACKUP_ORIGINAL = Path("/usr/lib/steamos/gamescope-session.egpubridge-original")
@@ -25,7 +25,7 @@ LEGACY_BACKUP = Path("/usr/lib/steamos/gamescope-session.bak-egpu")
 
 # eGPUBridge 0.2.00 safe wrapper config.
 # Do NOT patch /usr/lib/steamos/gamescope-session for normal display switching.
-PLUGIN_DIR = Path("/home/deck/homebrew/plugins/eGPUBridge")
+PLUGIN_DIR = Path(__file__).resolve().parent
 LOG_PATH = PLUGIN_DIR / "plugin.log"
 STATUS_PATH = PLUGIN_DIR / "last_status.json"
 OUTPUT_ORDER_CONF = PLUGIN_DIR / "output_order.conf"
@@ -608,6 +608,98 @@ def _is_valid_egpu_vk_id(value: str) -> bool:
 def _has_egpu_vk_in_gamescope(gs_cmdline: str) -> bool:
     """Check if gamescope process has any --prefer-vk-device with a real ID."""
     return bool(re.search(r"--prefer-vk-device\s+[0-9a-fA-F]{4}:[0-9a-fA-F]{4}", gs_cmdline or ""))
+
+
+def _gamescope_output_order(gs_cmdline: str) -> str:
+    """Return the live Gamescope -O/--prefer-output value, if present."""
+    text = str(gs_cmdline or "")
+    match = re.search(
+        r"(?:^|\s)(?:-O|--prefer-output)(?:=|\s+)(?:\"([^\"]+)\"|'([^']+)'|(\S+))",
+        text,
+    )
+    if not match:
+        return ""
+    return next((value for value in match.groups() if value is not None), "").strip()
+
+
+def _output_order_targets_connector(output_order: str, connector_name: str) -> bool:
+    connector = str(connector_name or "").strip()
+    if not connector:
+        return False
+    targets = [part.strip().strip("\"'") for part in str(output_order or "").split(",")]
+    return connector in targets
+
+
+def _output_order_targets_internal(output_order: str) -> bool:
+    targets = [part.strip().strip("\"'") for part in str(output_order or "").split(",")]
+    return any(target.lower().startswith("edp-") for target in targets)
+
+
+def _gamescope_user_context() -> dict:
+    """Find the user that owns the active Gamescope session."""
+    try:
+        import pwd
+
+        candidates = []
+        for proc in Path("/proc").glob("[0-9]*"):
+            try:
+                argv = [part for part in (proc / "cmdline").read_bytes().split(b"\0") if part]
+                comm = (proc / "comm").read_text(errors="ignore").strip()
+                executable = os.path.basename(argv[0].decode("utf-8", "ignore")) if argv else ""
+                if comm != "gamescope" and executable != "gamescope":
+                    continue
+                candidates.append((int(proc.name), proc.stat().st_uid))
+            except Exception:
+                continue
+        if candidates:
+            _pid, uid = max(candidates)
+            return {"username": pwd.getpwuid(uid).pw_name, "uid": uid, "source": "gamescope-process"}
+
+        for key in ("DECKY_USER", "SUDO_USER"):
+            username = str(os.environ.get(key, "") or "").strip()
+            if username and username != "root":
+                entry = pwd.getpwnam(username)
+                return {"username": entry.pw_name, "uid": entry.pw_uid, "source": key}
+
+        entry = pwd.getpwuid(1000)
+        return {"username": entry.pw_name, "uid": entry.pw_uid, "source": "uid-1000-fallback"}
+    except Exception as e:
+        return {"username": "deck", "uid": 1000, "source": "deck-fallback", "warning": str(e)}
+
+
+def update_gamescope_user_environment(values=None, unset=None) -> dict:
+    """Update the active user's systemd environment inherited by Gamescope."""
+    values = dict(values or {})
+    unset = list(unset or [])
+    context = _gamescope_user_context()
+    username = context["username"]
+    uid = int(context["uid"])
+    base = [
+        "/usr/bin/runuser", "-u", username, "--",
+        "/usr/bin/env",
+        f"XDG_RUNTIME_DIR=/run/user/{uid}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+        "/usr/bin/systemctl", "--user",
+    ] if getattr(os, "geteuid", lambda: 1)() == 0 else ["/usr/bin/systemctl", "--user"]
+
+    steps = []
+    for key, value in values.items():
+        if not re.fullmatch(r"[A-Z0-9_]+", str(key)):
+            steps.append({"ok": False, "key": str(key), "error": "invalid environment key"})
+            continue
+        res = run(base + ["set-environment", f"{key}={value}"], timeout=6)
+        steps.append({"ok": bool(res.get("ok")), "key": key, "action": "set", "result": res})
+
+    valid_unset = [str(key) for key in unset if re.fullmatch(r"[A-Z0-9_]+", str(key))]
+    if valid_unset:
+        res = run(base + ["unset-environment"] + valid_unset, timeout=6)
+        steps.append({"ok": bool(res.get("ok")), "keys": valid_unset, "action": "unset", "result": res})
+
+    return {
+        "ok": bool(steps) and all(step.get("ok") for step in steps),
+        "user": context,
+        "steps": steps,
+    }
 
 
 def get_current_patch_state():
@@ -1578,7 +1670,6 @@ def _internal_display_state():
 def _external_display_state(status_obj: dict):
     conn = (status_obj or {}).get("recommended_connector") or {}
     egpu = (status_obj or {}).get("egpu") or {}
-    patch = (status_obj or {}).get("patch_state") or {}
 
     name = conn.get("name") or "External display"
     display_name = "External display"
@@ -1589,7 +1680,11 @@ def _external_display_state(status_obj: dict):
     except Exception:
         display_name = name
 
-    active = bool(conn and conn.get("status") == "connected" and patch.get("has_prefer_vk_active"))
+    active = bool(
+        conn
+        and conn.get("status") == "connected"
+        and _display_target_label(status_obj) == "external"
+    )
 
     return {
         "name": display_name,
@@ -1601,13 +1696,24 @@ def _external_display_state(status_obj: dict):
 def _display_target_label(status_obj: dict) -> str:
     patch = (status_obj or {}).get("patch_state") or {}
     connector = (status_obj or {}).get("recommended_connector") or {}
-    egpu = (status_obj or {}).get("egpu") or {}
+    connector_name = connector.get("name") or ""
+    gamescope = (status_obj or {}).get("gamescope") or ""
+    live_output_order = _gamescope_output_order(gamescope)
 
-    # If we have a live connector on eGPU -> external
-    if egpu and connector and connector.get("name"):
+    # A connected connector is not necessarily the active Gamescope output.
+    if live_output_order:
+        if _output_order_targets_connector(live_output_order, connector_name):
+            return "external"
+        if _output_order_targets_internal(live_output_order):
+            return "internal"
+
+    configured_output_order = patch.get("output_order") or ""
+    if _output_order_targets_connector(configured_output_order, connector_name):
         return "external"
+    if _output_order_targets_internal(configured_output_order):
+        return "internal"
 
-    if patch.get("has_prefer_vk_active"):
+    if _has_egpu_vk_in_gamescope(gamescope):
         return "external"
 
     return "internal"
@@ -2195,14 +2301,17 @@ def build_status(heavy: bool = False):
             internal = status.get("internal_display") or {}
             external = status.get("external_display") or {}
 
-            if "-O HDMI-A-1" in gs or "-O 'HDMI-A-1'" in gs or "-O \"HDMI-A-1\"" in gs:
+            live_output_order = _gamescope_output_order(gs)
+            connector_name = (status.get("recommended_connector") or {}).get("name") or ""
+
+            if _output_order_targets_connector(live_output_order, connector_name):
                 internal["active"] = False
                 external["active"] = True
                 status["display_target"] = "external"
                 status["internal_display"] = internal
                 status["external_display"] = external
 
-            elif "-O *,eDP-1" in gs or "-O '*',eDP-1" in gs or "-O eDP-1" in gs:
+            elif _output_order_targets_internal(live_output_order):
                 internal["active"] = True
                 external["active"] = False
                 status["display_target"] = "internal"
@@ -2218,7 +2327,7 @@ def build_status(heavy: bool = False):
                     tvp["on"] = True
                     tvp["label"] = "On"
                     tvp["assumed"] = True
-                    tvp["reason"] = "Assumed from active HDMI-A-1 gamescope output"
+                    tvp["reason"] = f"Assumed from active {connector_name or 'external'} Gamescope output"
                     if not heavy:
                         tvp["source"] = "light-status-gamescope-assumption"
                     status["tv_power"] = tvp
@@ -3053,16 +3162,19 @@ def write_gamescope_wrapper_config(output_order: str, prefer_vk_device: str = "d
 def restart_gamescope_session_target():
     """
     Restart current user's Gamescope session target.
-    Works from Decky root backend by calling deck user's systemd --user.
+    Works from Decky root backend by calling the active Gamescope user's systemd manager.
     """
-    uid = os.geteuid()
+    backend_uid = getattr(os, "geteuid", lambda: 1)()
+    context = _gamescope_user_context()
+    username = context["username"]
+    session_uid = int(context["uid"])
 
-    if uid == 0:
+    if backend_uid == 0:
         cmd = [
-            "/usr/bin/runuser", "-u", "deck", "--",
+            "/usr/bin/runuser", "-u", username, "--",
             "/usr/bin/env",
-            "XDG_RUNTIME_DIR=/run/user/1000",
-            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+            f"XDG_RUNTIME_DIR=/run/user/{session_uid}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{session_uid}/bus",
             "/usr/bin/systemctl", "--user", "restart", "gamescope-session.target",
         ]
     else:
@@ -3084,6 +3196,7 @@ def restart_gamescope_session_target():
         "out": p.stdout[-2000:],
         "err": p.stderr[-2000:],
         "cmd": cmd,
+        "user": context,
     }
 
 
@@ -3165,16 +3278,8 @@ class Plugin:
         log(f"init v{VERSION}")
         status = build_status()
         # If gamescope is already in external/HDMI mode, turn off internal backlight
-        gamescope = status.get("gamescope") or ""
         display_target = status.get("display_target") or "unknown"
-        patch = status.get("patch_state") or {}
-        output_order = patch.get("output_order") or ""
-        external_active = (
-            display_target == "external"
-            or output_order.startswith("HDMI-A-1")
-            or "-O HDMI-A-1" in gamescope
-            or _has_egpu_vk_in_gamescope(gamescope)
-        )
+        external_active = display_target == "external"
         if external_active:
             log("init: gamescope in external mode, turning off internal backlight")
             try:
@@ -3470,6 +3575,11 @@ class Plugin:
         output_order = f"{output_name}"
 
         result = write_gamescope_wrapper_config(output_order, vendor_device)
+        result["user_environment"] = update_gamescope_user_environment(
+            values={"MESA_VK_DEVICE_SELECT": vendor_device}
+        )
+        if not result["user_environment"].get("ok"):
+            result["warning"] = "Could not set MESA_VK_DEVICE_SELECT for the Gamescope user session"
         if result.get("ok") and explicit_mode_request:
             result["gamescope_mode_config"] = write_gamescope_mode_config(width, height, refresh)
             if not result["gamescope_mode_config"].get("ok"):
@@ -3502,6 +3612,11 @@ class Plugin:
         restart_requested = bool(restart)
 
         result = write_gamescope_wrapper_config("*,eDP-1", "disabled")
+        result["user_environment"] = update_gamescope_user_environment(
+            unset=["MESA_VK_DEVICE_SELECT"]
+        )
+        if not result["user_environment"].get("ok"):
+            result["warning"] = "Could not clear MESA_VK_DEVICE_SELECT for the Gamescope user session"
         result["gamescope_mode_config"] = write_gamescope_mode_config(disabled=True)
         result["action"] = "restore_internal_mode"
         result["restart_requested"] = restart_requested
@@ -3564,12 +3679,7 @@ class Plugin:
             display_target = status.get("display_target") or "unknown"
             output_order = patch.get("output_order") or ""
 
-            external_active = (
-                display_target == "external"
-                or output_order.startswith("HDMI-A-1")
-                or "-O HDMI-A-1" in gamescope
-                or _has_egpu_vk_in_gamescope(gamescope)
-            )
+            external_active = display_target == "external"
 
             result = {
                 "ok": False,

@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Python syntax
+        run: python3 -m py_compile main.py
+
+      - name: Run backend regression tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Check frontend syntax
+        run: node --check dist/index.js
+
+      - name: Check shell syntax
+        run: bash -n bin/*.sh bin/gamescope-session-egpubridge bin/egb-copy-report

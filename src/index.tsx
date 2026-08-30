@@ -4092,8 +4092,8 @@ function App(props) {
 
         // EGB-018 stage 2 start: read-only diagnostics use native Decky rows.
         e(ButtonItem, {
-          label: "Collect Device Info",
-          description: "Create a redacted hardware and log summary",
+          label: "Device diagnostics",
+          description: "Redacted hardware and logs",
           layout: "inline",
           childrenContainerWidth: "min",
           disabled: diagLoading,
@@ -4113,22 +4113,37 @@ function App(props) {
 
         // Diagnostics summary
         diagnostics ? e(Field, {
-          label: "Device summary",
+          label: "Summary",
           childrenLayout: "below",
           padding: "compact",
           bottomSeparator: "none"
         },
-          e("div", null, "CPU: " + (diagnostics.cpu || "?")),
-          e("div", null, "RAM: " + (diagnostics.ram || "?")),
-          e("div", null, "GPU: " + (diagnostics.gpus ? diagnostics.gpus.length + " device(s)" : "?")),
-          e("div", null, "ADB: " + (diagnostics.adb && diagnostics.adb.installed ? "Yes" : "No")),
-          e("div", null, "PCIe link: " + (
-            diagnostics.pcie_link_health && diagnostics.pcie_link_health.headline
-              ? diagnostics.pcie_link_health.headline
-              : "Unknown"
-          )),
-          e("div", null, "Errors in log: " + (diagnostics.log_errors != null ? diagnostics.log_errors : "?")),
-          e("div", null, "Warnings in log: " + (diagnostics.log_warnings != null ? diagnostics.log_warnings : "?"))
+          e("div", {
+            className: "egbDiagnosticSummary",
+            style: {
+              width: "100%",
+              minWidth: 0,
+              boxSizing: "border-box",
+              fontSize: "11px",
+              lineHeight: "14px",
+              fontWeight: "600",
+              color: "rgba(225,232,245,.88)",
+              overflowWrap: "anywhere"
+            }
+          },
+            e("div", null, "CPU: " + (diagnostics.cpu || "?")),
+            e("div", null, "RAM: " + (diagnostics.ram_gib || diagnostics.ram || "?")),
+            e("div", null, "GPU: " + (diagnostics.gpus ? diagnostics.gpus.length + " device(s)" : "?")),
+            e("div", null, "ADB: " + (diagnostics.adb && diagnostics.adb.installed ? "Yes" : "No")),
+            e("div", null, "PCIe: " + (
+              diagnostics.pcie_link_health && diagnostics.pcie_link_health.headline
+                ? diagnostics.pcie_link_health.headline
+                : "Unknown"
+            )),
+            e("div", null, "Plugin log: " +
+              (diagnostics.log_errors != null ? diagnostics.log_errors : "?") + " errors · " +
+              (diagnostics.log_warnings != null ? diagnostics.log_warnings : "?") + " warnings")
+          )
         ) : null,
 
         e(ButtonItem, {

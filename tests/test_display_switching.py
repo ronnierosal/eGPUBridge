@@ -1463,7 +1463,7 @@ pcieport 0000:05:02.0: AER: device recovery failed
         self.assertEqual(summary["status"], "healthy")
         self.assertEqual(summary["total_aer_events"], 0)
         self.assertEqual(summary["affected_devices"], [])
-        self.assertIn("last 10 minutes", summary["headline"])
+        self.assertEqual(summary["headline"], "Healthy · 0 AER · 10 min")
 
     def test_collector_marks_validated_g1_topology_and_uses_read_only_journal_query(self):
         topology = {
@@ -1507,8 +1507,13 @@ pcieport 0000:05:02.0: AER: device recovery failed
     def test_frontend_shows_the_compact_link_health_headline(self):
         frontend = (Path(__file__).parents[1] / "src" / "index.tsx").read_text(encoding="utf-8")
 
-        self.assertIn('"PCIe link: "', frontend)
+        self.assertIn('label: "Device diagnostics"', frontend)
+        self.assertIn('label: "Summary"', frontend)
+        self.assertIn('className: "egbDiagnosticSummary"', frontend)
+        self.assertIn('fontSize: "11px"', frontend)
+        self.assertIn('"PCIe: "', frontend)
         self.assertIn("diagnostics.pcie_link_health.headline", frontend)
+        self.assertIn("diagnostics.ram_gib", frontend)
 
 
 class DiagnosticRedactionTests(unittest.TestCase):

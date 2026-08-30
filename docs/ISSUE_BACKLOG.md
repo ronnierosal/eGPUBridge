@@ -470,6 +470,12 @@ headline while retaining device-level evidence in the support payload. Remote
 captures preserve every raw record in `live.txt`, suppress repeated copies only
 from the operator console, and print the structured summary at the end of a run.
 
+The first on-device UI check reported a healthy 15-minute window with zero new
+AER events. A supplied Ally photo showed that the native summary text and the
+original long headline were too large for the panel. The summary now uses compact
+11-pixel text, shorter labels, GiB memory, and a single combined plugin-log line;
+visual confirmation of that follow-up remains pending.
+
 Before changing kernel settings, repeat the test with the cable reseated, a
 known-certified USB4 cable, and the other Ally USB4 port.
 

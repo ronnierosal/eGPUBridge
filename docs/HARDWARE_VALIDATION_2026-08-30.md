@@ -95,6 +95,13 @@ and internal sides of the handoff: correctable `BadDLLP` reports on the Intel
 Both user-visible transitions still completed. This confirms EGB-023 remains an
 independent USB4/PCIe link-health investigation rather than a transition failure.
 
+The first deployed EGB-023 diagnostic UI pass later reported `Healthy` with zero
+new AER events in its 15-minute window while the G1 remained detected as the
+second GPU. The result was correct, but the native summary typography and verbose
+headline wrapped poorly on the Ally panel. The follow-up uses an 11-pixel compact
+summary, shorter labels, GiB memory display, and a concise health headline; that
+layout still requires visual confirmation after deployment.
+
 An attached-G1 suspend test later entered `s2idle` at 13:53:56 and 13:54:11, then
 resumed about four seconds after each attempt without operator input. The resume
 path reported `BadTLP`, non-fatal `ACSViol`, failed xHCI recovery at

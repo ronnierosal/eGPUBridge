@@ -3983,12 +3983,13 @@ def summarize_pcie_link_health(journal_text: str, window_minutes: int = 15, g1_p
         for item in affected_devices
         if item["g1_topology"]
     )
+    recovery_records = recovery_failures + cannot_recover
     if status == "healthy":
-        headline = f"Healthy: no PCIe AER events in the last {window_minutes} minutes"
+        headline = f"Healthy · 0 AER · {window_minutes} min"
     else:
         headline = (
-            f"{status.title()}: {total_events} PCIe AER event(s), "
-            f"{recovery_failures + cannot_recover} recovery failure record(s)"
+            f"{status.title()} · {total_events} AER · "
+            f"{recovery_records} recovery · {window_minutes} min"
         )
 
     return {
@@ -7086,6 +7087,9 @@ def collect_diagnostics(include_sensitive=False):
             for line in f:
                 if line.startswith("MemTotal"):
                     info["ram"] = line.split(":")[1].strip()
+                    match = re.search(r"([0-9]+)\s+kB", info["ram"], re.IGNORECASE)
+                    if match:
+                        info["ram_gib"] = f"{int(match.group(1)) / 1048576:.1f} GiB"
                     break
     except Exception:
         pass

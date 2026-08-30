@@ -8,7 +8,9 @@ __pycache__/
 backup_*/
 .claude/
 *.conf
+!tests/fixtures/shim-config/*.conf
 last_status.json
+display_transition.json
 hotkey_settings.json
 tv_control_automation.json
 .DS_Store

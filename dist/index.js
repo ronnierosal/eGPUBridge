@@ -13,6 +13,10 @@ const React =
   window.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED?.React ||
   globalThis.React;
 
+// The backend also fails closed. Keep the dangerous controls out of the active
+// UI until their hardware-specific safety checks are implemented and tested.
+const UNSAFE_HARDWARE_CONTROLS_ENABLED = false;
+
 const Components =
   DFL.Components ||
   DFL.components ||
@@ -1553,6 +1557,10 @@ function App(props) {
     }
 
     function gpuSetFanControl(mode, pwm) {
+      if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) {
+        setLast({ ok: false, disabled: true, error: "Manual fan control is disabled in this safety build." });
+        return Promise.resolve({ ok: false, disabled: true });
+      }
       setBusy(true);
       call(serverApi, "gpu_set_fan_control", { mode: mode, pwm: pwm }).then(function(res) {
         setLast(res);
@@ -1609,6 +1617,10 @@ function App(props) {
     }
 
     function gpuSetOdClocks(commit) {
+      if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) {
+        setLast({ ok: false, disabled: true, error: "Clock and voltage controls are disabled in this safety build." });
+        return Promise.resolve({ ok: false, disabled: true });
+      }
       setBusy(true);
       var params = { commit: !!commit };
       if (odSclk !== null) params.sclk_mhz = odSclk;
@@ -3124,6 +3136,9 @@ function App(props) {
                     { id: "low", label: "LOW", desc: "Force minimum clocks, power saving" },
                     { id: "manual", label: "MANUAL", desc: "Manual control via sysfs" }
                   ];
+                  if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) {
+                    perfLevels = perfLevels.filter(function(level) { return level.id !== "manual"; });
+                  }
                   var perfColors = { auto: "rgba(220,130,255,.95)", high: "rgba(255,80,80,.90)", low: "rgba(80,255,150,.90)", manual: "rgba(255,180,60,.90)" };
                   var current = perfLevels.find(function(l) { return l.id === gpuTuning.perf_level; }) || perfLevels[0];
                   return e("div", { style: { marginBottom: "10px" } },
@@ -3205,7 +3220,7 @@ function App(props) {
                       )
                     ) : null,
                     // Manual Clocks (inside Performance Level card)
-                    gpuTuning.perf_level === "manual" ? (function() {
+                    UNSAFE_HARDWARE_CONTROLS_ENABLED && gpuTuning.perf_level === "manual" ? (function() {
                       var sclkMax = odClocks && odClocks.sclk_max ? odClocks.sclk_max : 3000;
                       var mclkMax = odClocks && odClocks.mclk_max ? odClocks.mclk_max : 2500;
                       var vddgfxMax = odClocks && odClocks.vddgfx_max ? odClocks.vddgfx_max : 1200;
@@ -3293,6 +3308,9 @@ function App(props) {
                     var ib = profileOrder.indexOf(b.name); if (ib < 0) ib = 99;
                     return ia - ib;
                   });
+                  if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) {
+                    sortedProfiles = sortedProfiles.filter(function(profile) { return profile.name !== "CUSTOM"; });
+                  }
                   var activeP = gpuTuning.profiles.find(function(p) { return p.name === gpuTuning.active_profile; }) || gpuTuning.profiles[0];
                   var activeDesc = profileDescs[activeP.name] || "";
                   var activeColor = profileColors[activeP.name] || "rgba(180,205,245,.60)";
@@ -3390,7 +3408,7 @@ function App(props) {
                       )
                     ) : null,
                     // Custom Profile Tuning (inside Power Profile card)
-                    (gpuTuning.active_profile === "CUSTOM" || customActivated) && !showCustomWarning ? (function() {
+                    UNSAFE_HARDWARE_CONTROLS_ENABLED && (gpuTuning.active_profile === "CUSTOM" || customActivated) && !showCustomWarning ? (function() {
                       var sclkMax = odClocks && odClocks.sclk_max ? odClocks.sclk_max : 3000;
                       var mclkMax = odClocks && odClocks.mclk_max ? odClocks.mclk_max : 2500;
                       var vddgfxMax = odClocks && odClocks.vddgfx_max ? odClocks.vddgfx_max : 1200;
@@ -3457,6 +3475,7 @@ function App(props) {
 
               // === Section 1.5: NVIDIA Driver Management ===
               (function() {
+                if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) return null;
                 var vendor = status && status.active_vendor ? status.active_vendor : "auto";
                 var nvidiaInstalled = status && status.nvidia_driver_installed;
                 var nvidiaSmi = status && status.nvidia_smi;
@@ -3854,11 +3873,13 @@ function App(props) {
         // Safe Unplug button
         e(Focusable, {
           className: "egpuProfileRow",
-          onActivate: function() { doCall("prepare_for_unplug", {}); }
+          onActivate: function() {
+            setLast({ ok: false, disabled: true, error: "Safe Unplug is disabled until USB4 storage and topology checks are implemented." });
+          }
         },
           e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } },
             e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Safe Unplug"),
-            e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Eject eGPU")
+            e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(255,210,90,.70)" } }, "Disabled for safety")
           )
         ),
 
@@ -4062,6 +4083,7 @@ function definePlugin(serverApi) {
         DialogButton,
         {
           onOKActionDescription: "Safe Disconnect eGPU",
+          disabled: !UNSAFE_HARDWARE_CONTROLS_ENABLED,
           style: {
             height: "28px",
             width: "40px",
@@ -4073,7 +4095,7 @@ function definePlugin(serverApi) {
             alignItems: "center"
           },
           onClick: function() {
-            doCall("safe_disconnect", {});
+            if (UNSAFE_HARDWARE_CONTROLS_ENABLED) doCall("safe_disconnect", {});
           }
         },
         e("svg", {

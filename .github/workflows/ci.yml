@@ -23,4 +23,19 @@ jobs:
         run: node --check dist/index.js
 
       - name: Check shell syntax
-        run: bash -n bin/*.sh bin/gamescope-session-egpubridge bin/egb-copy-report
+        run: bash -n bin/*.sh bin/gamescope bin/gamescope-session-egpubridge bin/egb-copy-report
+
+      - name: Smoke test Gamescope argument shim
+        run: |
+          actual="$(EGPUBRIDGE_PLUGIN_DIR="$PWD/tests/fixtures/shim-config" \
+            EGPUBRIDGE_REAL_GAMESCOPE=/usr/bin/echo \
+            bash bin/gamescope -O '*,eDP-1' --prefer-vk-device 1002:dead -w 1280 -h 800 -e)"
+          expected='-O HDMI-A-2 -w 1280 -h 800 -e --prefer-vk-device 1002:7480 -W 1920 -H 1080 -r 60'
+          test "$actual" = "$expected"
+          tail="$(EGPUBRIDGE_PLUGIN_DIR="$PWD/tests/fixtures/shim-config" \
+            EGPUBRIDGE_REAL_GAMESCOPE=/usr/bin/echo \
+            bash bin/gamescope -e -- steam --prefer-vk-device client-argument)"
+          case "$tail" in
+            *'-- steam --prefer-vk-device client-argument') ;;
+            *) exit 1 ;;
+          esac

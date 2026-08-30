@@ -6,8 +6,8 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Experimental eGPU manager for SteamOS-compatible Game Mode sessions.** It can select an
-external GPU/output, control a TV, expose GPU tuning controls, and recover the internal
-display from Decky's quick-access menu.
+external GPU/output, control a TV, expose limited GPU telemetry and power controls, and
+recover the internal display from Decky's quick-access menu.
 
 This fork focuses first on AMD handhelds and AMD USB4 eGPUs, especially the ASUS ROG Ally X
 + GPD G1 path. It fixes connected-vs-active display detection, supports non-default HDMI/DP
@@ -17,11 +17,11 @@ launches Gamescope.
 ## Features
 
 - **SMART Display Switch** — one-tap toggle between internal and external display
-- **GPU Tuning** — power cap, fan control, performance level, overclocking (AMD)
+- **Conservative GPU Controls** — telemetry, power cap, and safe performance levels (AMD)
 - **TV Control** — ADB-based TV power/input control with Wi-Fi auto-start
-- **Experimental NVIDIA tools** — DKMS driver install, activate/deactivate, nvidia-smi telemetry
+- **NVIDIA telemetry** — driver mutation is intentionally disabled in this AMD-focused fork
 - **Dock Detection** — USB4/Thunderbolt dock status, ASMedia 246x identification
-- **Safe Disconnect** — graceful eGPU removal with PCI cleanup
+- **Fail-closed unplug control** — PCI removal stays disabled until topology and storage checks exist
 - **Gamepad UI** — fully navigable with Steam Deck gamepad controls
 - **Recovery Hotkeys** — hardware button combos for display recovery
 
@@ -32,7 +32,7 @@ launches Gamescope.
 | Lenovo Legion Go S + AMD RX 9070 + ASMedia USB4 | Tested by the upstream author |
 | ASUS ROG Ally X + GPD G1 | Targeted by this fork; on-device validation still required |
 | Other AMD handheld/eGPU combinations | Expected to work through runtime DRM discovery; unverified |
-| NVIDIA eGPUs | Experimental and high-risk; not validated by this fork |
+| NVIDIA eGPUs | Telemetry only; driver and PCI mutation are disabled |
 
 The original repository's broader “full support” claims were not backed by a device test
 matrix. Keep SSH access available while testing any display-session change.
@@ -51,6 +51,12 @@ For development, copy the folder under the actual Decky user's home directory. T
 backend now discovers its own plugin directory, and the Gamescope helper discovers the
 active Gamescope user instead of assuming that user is always named `deck`.
 
+On the first display switch, the plugin installs a small user-systemd environment drop-in
+for `gamescope-session.service`. This puts the plugin's argument shim ahead of the stock
+`gamescope` binary. It does **not** replace `/usr/lib/steamos/gamescope-session`. If this
+preflight cannot be installed or the unit is not present, switching fails without turning
+off the internal display.
+
 ## Usage
 
 ### SMART Button
@@ -63,23 +69,19 @@ The main control — toggles between internal display and eGPU-connected externa
 
 ### GPU Tuning (AMD)
 - **Power Limit** — adjust GPU power cap (D-pad left/right)
-- **Performance Level** — AUTO / HIGH / LOW / MANUAL
-- **Power Profile** — BOOTUP / 3D_FULL_SCREEN / POWER_SAVING / etc.
-- **Manual Clocks** — GPU/VRAM/Voltage sliders (MANUAL mode)
+- **Performance Level** — AUTO / HIGH / LOW
+- **Fan and manual clock/voltage writes** — disabled until device-specific bounds, rollback,
+  and a watchdog are implemented
 
-### GPU Tuning (NVIDIA)
-- **Power Cap** — via `nvidia-smi -pl`
-- **Fan Control** — auto/manual via `nvidia-settings`
-- **Performance Level** — GPUPowerMizerMode (auto/high/low)
+### NVIDIA support
 
-### NVIDIA Driver Management
-- **Install Driver** — DKMS-based nvidia-dkms installation on SteamOS
-- **Activate / Deactivate** — module loading, environment variables, gamescope restart
-- **Uninstall Driver** — clean removal with DKMS + pacman
+NVIDIA driver installation, removal, activation, and deactivation are hidden in the UI and
+rejected by the backend. Installing OS drivers from a root Decky RPC is outside this fork's
+safe scope.
 
 ### Other
 - **Recovery Hotkey** — toggle hardware button combos for display recovery
-- **Safe Unplug** — graceful eGPU disconnect
+- **Safe Unplug** — currently disabled; disconnect the G1 only after restoring internal mode
 - **Restore Internal** — switch back to internal display
 - **Diagnostics** — collect device info, TV health, recent events
 
@@ -110,6 +112,7 @@ eGPUBridge/
 ├── bin/                # Shell scripts (auto-detect, shutdown)
 │   ├── egpubridge-auto.sh
 │   ├── egpubridge-shutdown.sh
+│   ├── gamescope                 # Small argument-injection shim
 │   ├── gamescope-session-egpubridge
 │   └── platform-tools/ # ADB, fastboot
 └── LICENSE
@@ -130,13 +133,18 @@ If the G1 is detected but the TV stays dark:
 1. Connect the TV directly to the G1 and select that TV input.
 2. Open eGPUBridge diagnostics and confirm the external connector is `connected` and has
    modes. The name may be `HDMI-A-1`, `HDMI-A-2`, `DP-1`, or another DRM connector.
-3. Press **SMART switch to TV**. Expect Game Mode to restart for several seconds.
+3. Close any running game, then press **SMART switch to TV**. The plugin blocks the reload
+   if it detects a Steam game scope. Expect Game Mode to restart for several seconds only
+   when the requested output/GPU/mode differs from the live Gamescope process.
 4. If it remains internal, collect `plugin.log`, the current Gamescope command line, and
-   `systemctl --user show-environment | grep MESA_VK_DEVICE_SELECT` over SSH.
+   `systemctl --user show-environment | grep MESA_VK_DEVICE_SELECT` over SSH. Also collect
+   `~/.config/systemd/user/gamescope-session.service.d/50-egpubridge.conf`.
 
 This fork sets `MESA_VK_DEVICE_SELECT=<AMD vendor:device>` before restarting Gamescope and
-unsets it when restoring the internal display. That addresses the regression reported in
-upstream issue #2, but hardware confirmation is still needed on the GPD G1.
+unsets it when restoring the internal display. It records the transition, waits for a new
+Gamescope PID with the exact requested arguments, and keeps the internal panel enabled if
+verification fails. That addresses the regression reported in upstream issue #2, but
+hardware confirmation is still needed on the GPD G1.
 
 ## License
 

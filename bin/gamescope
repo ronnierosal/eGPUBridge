@@ -1,0 +1,124 @@
+#!/bin/bash
+
+# eGPUBridge Gamescope argument shim.
+#
+# SteamOS owns /usr/lib/steamos/gamescope-session.  A user-systemd drop-in
+# prepends this directory to PATH so the stock session script invokes this
+# shim instead of /usr/bin/gamescope.  The shim changes only the arguments
+# controlled by eGPUBridge, then delegates to Valve's real binary.
+
+set -u
+
+REAL_GAMESCOPE="${EGPUBRIDGE_REAL_GAMESCOPE:-/usr/bin/gamescope}"
+PLUGIN_DIR="${EGPUBRIDGE_PLUGIN_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
+
+if [[ ! -x "$REAL_GAMESCOPE" ]]; then
+    echo >&2 "eGPUBridge: real Gamescope binary is not executable: $REAL_GAMESCOPE"
+    exit 127
+fi
+
+read_first_line() {
+    local path="$1"
+    [[ -f "$path" ]] || return 0
+    head -n 1 -- "$path" | tr -d '[:space:]'
+}
+
+output_order="$(read_first_line "$PLUGIN_DIR/output_order.conf")"
+prefer_vk_device="$(read_first_line "$PLUGIN_DIR/prefer_vk_device.conf")"
+mode="$(read_first_line "$PLUGIN_DIR/gamescope_mode.conf")"
+
+case "$output_order" in
+    *[!A-Za-z0-9_,.*-]*|"")
+        output_order=""
+        ;;
+esac
+
+case "$prefer_vk_device" in
+    [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])
+        ;;
+    *)
+        prefer_vk_device=""
+        ;;
+esac
+
+mode_width=""
+mode_height=""
+mode_refresh=""
+if [[ "$mode" =~ ^([0-9]+)x([0-9]+)@([0-9]+)$ ]]; then
+    mode_width="${BASH_REMATCH[1]}"
+    mode_height="${BASH_REMATCH[2]}"
+    mode_refresh="${BASH_REMATCH[3]}"
+fi
+
+args=()
+tail_args=()
+output_replaced=0
+
+while (($#)); do
+    case "$1" in
+        --)
+            shift
+            tail_args=("$@")
+            break
+            ;;
+        -O|--prefer-output)
+            option="$1"
+            shift
+            old_value="${1:-}"
+            if [[ -n "$output_order" ]]; then
+                if ((output_replaced == 0)); then
+                    args+=("$option" "$output_order")
+                    output_replaced=1
+                fi
+            else
+                args+=("$option" "$old_value")
+            fi
+            ;;
+        --prefer-output=*)
+            if [[ -n "$output_order" ]]; then
+                if ((output_replaced == 0)); then
+                    args+=("--prefer-output=$output_order")
+                    output_replaced=1
+                fi
+            else
+                args+=("$1")
+            fi
+            ;;
+        --prefer-vk-device)
+            shift
+            ;;
+        --prefer-vk-device=*)
+            ;;
+        -W|-H|-r)
+            if [[ -n "$mode_width" ]]; then
+                shift
+            else
+                option="$1"
+                shift
+                args+=("$option" "${1:-}")
+            fi
+            ;;
+        *)
+            args+=("$1")
+            ;;
+    esac
+    shift
+done
+
+if [[ -n "$output_order" && $output_replaced -eq 0 ]]; then
+    args+=("-O" "$output_order")
+fi
+
+if [[ -n "$prefer_vk_device" ]]; then
+    args+=("--prefer-vk-device" "$prefer_vk_device")
+fi
+
+if [[ -n "$mode_width" ]]; then
+    args+=("-W" "$mode_width" "-H" "$mode_height" "-r" "$mode_refresh")
+fi
+
+if ((${#tail_args[@]})); then
+    args+=("--" "${tail_args[@]}")
+fi
+
+exec "$REAL_GAMESCOPE" "${args[@]}"

@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest import mock
 
 import main
@@ -98,6 +100,247 @@ class ApplyModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ok"])
         config_mock.assert_called_once_with("HDMI-A-2", "1002:7480")
         env_mock.assert_called_once_with(values={"MESA_VK_DEVICE_SELECT": "1002:7480"})
+
+    async def test_restart_is_skipped_when_exact_external_state_is_live(self):
+        detected = {
+            "egpu": {
+                "card": "card1",
+                "pci": "0000:65:00.0",
+                "vendor": "0x1002",
+                "device": "0x7480",
+            },
+            "recommended_connector": {"name": "HDMI-A-2", "status": "connected"},
+            "gamescope": "420 gamescope -O HDMI-A-2 --prefer-vk-device 1002:7480 -e",
+        }
+        with mock.patch.object(main, "build_status", return_value=detected), mock.patch.object(
+            main, "_running_steam_games", return_value={"ok": True, "games": [], "count": 0}
+        ) as running_mock, mock.patch.object(
+            main, "ensure_gamescope_integration", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "write_gamescope_wrapper_config", return_value={"ok": True}
+        ), mock.patch.object(
+            main, "update_gamescope_user_environment", return_value={"ok": True, "steps": []}
+        ), mock.patch.object(main, "_apply_restart_sync") as restart_mock:
+            result = await main.Plugin.apply_egpu_mode(restart=True)
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["restart_skipped"])
+        running_mock.assert_not_called()
+        restart_mock.assert_not_called()
+
+    async def test_running_game_blocks_session_restart_before_configuration_changes(self):
+        detected = {
+            "egpu": {
+                "card": "card1",
+                "pci": "0000:65:00.0",
+                "vendor": "0x1002",
+                "device": "0x7480",
+            },
+            "recommended_connector": {"name": "HDMI-A-2", "status": "connected"},
+            "gamescope": "420 gamescope -O *,eDP-1 -e",
+        }
+        running = {
+            "ok": True,
+            "games": [{"appid": 1234, "unit": "app-steam-1234.scope"}],
+            "count": 1,
+        }
+        with mock.patch.object(main, "build_status", return_value=detected), mock.patch.object(
+            main, "_running_steam_games", return_value=running
+        ), mock.patch.object(main, "ensure_gamescope_integration") as integration_mock, mock.patch.object(
+            main, "write_gamescope_wrapper_config"
+        ) as config_mock:
+            result = await main.Plugin.apply_egpu_mode(restart=True)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_code"], "running_game")
+        self.assertTrue(result["requires_confirmation"])
+        integration_mock.assert_not_called()
+        config_mock.assert_not_called()
+
+    async def test_reload_fails_closed_when_running_game_check_is_unavailable(self):
+        detected = {
+            "egpu": {
+                "card": "card1",
+                "pci": "0000:65:00.0",
+                "vendor": "0x1002",
+                "device": "0x7480",
+            },
+            "recommended_connector": {"name": "HDMI-A-2", "status": "connected"},
+            "gamescope": "420 gamescope -O *,eDP-1 -e",
+        }
+        check = {"ok": False, "games": [], "count": 0, "check": {"err": "user bus unavailable"}}
+        with mock.patch.object(main, "build_status", return_value=detected), mock.patch.object(
+            main, "_running_steam_games", return_value=check
+        ), mock.patch.object(main, "ensure_gamescope_integration") as integration_mock, mock.patch.object(
+            main, "write_gamescope_wrapper_config"
+        ) as config_mock:
+            result = await main.Plugin.apply_egpu_mode(restart=True)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_code"], "running_game_check_failed")
+        integration_mock.assert_not_called()
+        config_mock.assert_not_called()
+
+
+class GamescopeDesiredStateTests(unittest.TestCase):
+    def test_external_state_requires_both_output_and_exact_gpu(self):
+        desired = {
+            "target": "external",
+            "connector": "HDMI-A-2",
+            "output_order": "HDMI-A-2",
+            "prefer_vk_device": "1002:7480",
+            "mode": {},
+        }
+        self.assertTrue(
+            main._gamescope_matches_desired(
+                "77 gamescope -O HDMI-A-2 --prefer-vk-device 1002:7480 -e",
+                desired,
+            )
+        )
+        self.assertFalse(
+            main._gamescope_matches_desired(
+                "77 gamescope -O HDMI-A-2 --prefer-vk-device 1002:7550 -e",
+                desired,
+            )
+        )
+
+    def test_internal_state_rejects_stale_external_gpu_preference(self):
+        desired = {
+            "target": "internal",
+            "output_order": "*,eDP-1",
+            "prefer_vk_device": "disabled",
+            "mode": {},
+        }
+        self.assertTrue(main._gamescope_matches_desired("81 gamescope -O *,eDP-1 -e", desired))
+        self.assertFalse(
+            main._gamescope_matches_desired(
+                "81 gamescope -O *,eDP-1 --prefer-vk-device 1002:7480 -e",
+                desired,
+            )
+        )
+
+    def test_requested_mode_must_match_live_arguments(self):
+        desired = {
+            "target": "external",
+            "connector": "HDMI-A-2",
+            "output_order": "HDMI-A-2",
+            "prefer_vk_device": "1002:7480",
+            "mode": {"width": 1920, "height": 1080, "refresh": 60},
+        }
+        self.assertTrue(
+            main._gamescope_matches_desired(
+                "90 gamescope -O HDMI-A-2 --prefer-vk-device 1002:7480 -W 1920 -H 1080 -r 60",
+                desired,
+            )
+        )
+        self.assertFalse(
+            main._gamescope_matches_desired(
+                "90 gamescope -O HDMI-A-2 --prefer-vk-device 1002:7480 -W 3840 -H 2160 -r 60",
+                desired,
+            )
+        )
+
+
+class RunningGameTests(unittest.TestCase):
+    def test_only_steam_game_scopes_trigger_the_reload_guard(self):
+        units = """\
+app-steam-1234.scope loaded active running Game 1234
+steam-app-5678.scope loaded active running Game 5678
+app-com.valvesoftware.Steam.scope loaded active running Steam
+gamescope-session.scope loaded active running Gamescope
+"""
+        context = {"username": "ally", "uid": 1000, "source": "test"}
+        with mock.patch.object(main, "_gamescope_user_context", return_value=context), mock.patch.object(
+            main, "run", return_value={"ok": True, "rc": 0, "out": units, "err": ""}
+        ):
+            result = main._running_steam_games()
+
+        self.assertEqual(result["count"], 2)
+        self.assertEqual([game["appid"] for game in result["games"]], [1234, 5678])
+
+
+class GamescopeRestartTests(unittest.TestCase):
+    def test_live_readiness_can_succeed_when_systemctl_times_out(self):
+        timeout = main.subprocess.TimeoutExpired(["systemctl"], 20)
+        ready = {"ok": True, "ready": True, "current_pids": [22]}
+        with mock.patch.object(
+            main,
+            "_gamescope_user_context",
+            return_value={"username": "ally", "uid": 1000, "source": "test"},
+        ), mock.patch.object(main, "current_gamescope_process", return_value="11 gamescope -O *,eDP-1"), mock.patch.object(
+            main, "_gamescope_pids", return_value=[11]
+        ), mock.patch.object(main.subprocess, "run", side_effect=timeout), mock.patch.object(
+            main, "_wait_for_gamescope_ready", return_value=ready
+        ):
+            result = main.restart_gamescope_session_target({"target": "internal"})
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["systemctl_ok"])
+        self.assertIn("timed out", result["err"])
+
+
+class GamescopeIntegrationTests(unittest.TestCase):
+    def test_install_uses_a_user_dropin_and_never_replaces_the_system_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin_dir = root / "plugin"
+            shim = plugin_dir / "bin" / "gamescope"
+            shim.parent.mkdir(parents=True)
+            shim.write_text("#!/bin/bash\n# eGPUBridge Gamescope argument shim\n")
+            context = {
+                "username": "ally",
+                "uid": 1000,
+                "gid": 1000,
+                "home": str(root / "home" / "ally"),
+                "source": "test",
+            }
+
+            def fake_run(command, timeout=12):
+                if "show" in command:
+                    return {"ok": True, "rc": 0, "out": "loaded", "err": "", "cmd": command}
+                return {"ok": True, "rc": 0, "out": "", "err": "", "cmd": command}
+
+            with mock.patch.object(main, "PLUGIN_DIR", plugin_dir), mock.patch.object(
+                main, "GAMESCOPE_SHIM", shim
+            ), mock.patch.object(
+                main, "_gamescope_user_context", return_value=context
+            ), mock.patch.object(
+                main.os, "geteuid", return_value=0, create=True
+            ), mock.patch.object(main.os, "chown", create=True), mock.patch.object(main, "run", side_effect=fake_run):
+                result = main.ensure_gamescope_integration()
+
+            self.assertTrue(result["ok"])
+            dropin = Path(result["dropin"])
+            self.assertTrue(dropin.exists())
+            text = dropin.read_text()
+            self.assertIn(main._systemd_environment_value(str(shim.parent)), text)
+            self.assertIn("EGPUBRIDGE_PLUGIN_DIR", text)
+            self.assertNotIn("ExecStart=", text)
+            self.assertNotEqual(dropin, main.GAMESCOPE_SESSION)
+
+
+class SafetyGateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unsafe_mutations_fail_closed_in_the_backend(self):
+        fan = await main.gpu_set_fan_control(mode="manual", pwm=0)
+        clocks = await main.gpu_set_od_clocks(sclk_mhz=9999, commit=True)
+        disconnect = await main.Plugin.safe_disconnect()
+        install = await main.nvidia_install_driver()
+
+        for result in (fan, clocks, disconnect, install):
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["disabled"])
+            self.assertEqual(result["error_code"], "feature_disabled_for_safety")
+
+
+class InternalConnectorSafetyTests(unittest.TestCase):
+    def test_missing_edp_connector_has_no_guessed_id(self):
+        with mock.patch.object(
+            main, "find_internal_display_card", return_value=("card0", "eDP-1", "/sys/class/drm/card0-eDP-1")
+        ), mock.patch.object(main, "run", return_value={"ok": True, "rc": 0, "out": "", "err": ""}):
+            result = main.find_internal_edp_connector_id()
+
+        self.assertFalse(result["ok"])
+        self.assertIsNone(result["connector_id"])
 
 
 if __name__ == "__main__":

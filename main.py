@@ -31,6 +31,14 @@ STATUS_PATH = PLUGIN_DIR / "last_status.json"
 OUTPUT_ORDER_CONF = PLUGIN_DIR / "output_order.conf"
 PREFER_VK_DEVICE_CONF = PLUGIN_DIR / "prefer_vk_device.conf"
 GAMESCOPE_MODE_CONF = PLUGIN_DIR / "gamescope_mode.conf"
+GAMESCOPE_SHIM = PLUGIN_DIR / "bin" / "gamescope"
+TRANSITION_PATH = PLUGIN_DIR / "display_transition.json"
+GAMESCOPE_UNIT = "gamescope-session.service"
+GAMESCOPE_TARGET = "gamescope-session.target"
+
+# These controls remain callable by older frontends, so the backend must fail
+# closed as well as hiding them in the current UI.
+UNSAFE_HARDWARE_CONTROLS_ENABLED = False
 
 ENV_OVERRIDE = Path("/home/deck/.config/environment.d/99-egpubridge.conf")
 
@@ -653,18 +661,60 @@ def _gamescope_user_context() -> dict:
                 continue
         if candidates:
             _pid, uid = max(candidates)
-            return {"username": pwd.getpwuid(uid).pw_name, "uid": uid, "source": "gamescope-process"}
+            entry = pwd.getpwuid(uid)
+            return {
+                "username": entry.pw_name,
+                "uid": uid,
+                "gid": entry.pw_gid,
+                "home": entry.pw_dir,
+                "source": "gamescope-process",
+            }
 
         for key in ("DECKY_USER", "SUDO_USER"):
             username = str(os.environ.get(key, "") or "").strip()
             if username and username != "root":
                 entry = pwd.getpwnam(username)
-                return {"username": entry.pw_name, "uid": entry.pw_uid, "source": key}
+                return {
+                    "username": entry.pw_name,
+                    "uid": entry.pw_uid,
+                    "gid": entry.pw_gid,
+                    "home": entry.pw_dir,
+                    "source": key,
+                }
 
         entry = pwd.getpwuid(1000)
-        return {"username": entry.pw_name, "uid": entry.pw_uid, "source": "uid-1000-fallback"}
+        return {
+            "username": entry.pw_name,
+            "uid": entry.pw_uid,
+            "gid": entry.pw_gid,
+            "home": entry.pw_dir,
+            "source": "uid-1000-fallback",
+        }
     except Exception as e:
-        return {"username": "deck", "uid": 1000, "source": "deck-fallback", "warning": str(e)}
+        return {
+            "username": "deck",
+            "uid": 1000,
+            "gid": 1000,
+            "home": "/home/deck",
+            "source": "deck-fallback",
+            "warning": str(e),
+        }
+
+
+def _gamescope_systemctl_base(context=None) -> list:
+    """Return a systemctl --user command for the active Gamescope user."""
+    context = dict(context or _gamescope_user_context())
+    username = context["username"]
+    uid = int(context["uid"])
+    if getattr(os, "geteuid", lambda: 1)() == 0:
+        return [
+            "/usr/bin/runuser", "-u", username, "--",
+            "/usr/bin/env",
+            f"XDG_RUNTIME_DIR=/run/user/{uid}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+            "/usr/bin/systemctl", "--user",
+        ]
+    return ["/usr/bin/systemctl", "--user"]
 
 
 def update_gamescope_user_environment(values=None, unset=None) -> dict:
@@ -672,15 +722,7 @@ def update_gamescope_user_environment(values=None, unset=None) -> dict:
     values = dict(values or {})
     unset = list(unset or [])
     context = _gamescope_user_context()
-    username = context["username"]
-    uid = int(context["uid"])
-    base = [
-        "/usr/bin/runuser", "-u", username, "--",
-        "/usr/bin/env",
-        f"XDG_RUNTIME_DIR=/run/user/{uid}",
-        f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
-        "/usr/bin/systemctl", "--user",
-    ] if getattr(os, "geteuid", lambda: 1)() == 0 else ["/usr/bin/systemctl", "--user"]
+    base = _gamescope_systemctl_base(context)
 
     steps = []
     for key, value in values.items():
@@ -699,6 +741,122 @@ def update_gamescope_user_environment(values=None, unset=None) -> dict:
         "ok": bool(steps) and all(step.get("ok") for step in steps),
         "user": context,
         "steps": steps,
+    }
+
+
+def _systemd_environment_value(value: str) -> str:
+    """Escape a value embedded in a systemd Environment= quoted string."""
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+
+
+def _gamescope_dropin_path(context=None) -> Path:
+    context = dict(context or _gamescope_user_context())
+    home = str(context.get("home") or f"/home/{context.get('username', 'deck')}")
+    return Path(home) / ".config" / "systemd" / "user" / f"{GAMESCOPE_UNIT}.d" / "50-egpubridge.conf"
+
+
+def _gamescope_dropin_text() -> str:
+    plugin_dir = _systemd_environment_value(str(PLUGIN_DIR))
+    shim_dir = _systemd_environment_value(str(GAMESCOPE_SHIM.parent))
+    path_value = f"{shim_dir}:/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
+    return (
+        "# Managed by eGPUBridge. Remove this file to disable the argument shim.\n"
+        "[Service]\n"
+        f'Environment="PATH={path_value}"\n'
+        f'Environment="EGPUBRIDGE_PLUGIN_DIR={plugin_dir}"\n'
+        'Environment="EGPUBRIDGE_REAL_GAMESCOPE=/usr/bin/gamescope"\n'
+    )
+
+
+def gamescope_integration_status(context=None, verify_unit: bool = False) -> dict:
+    """Describe whether the reversible user-systemd Gamescope shim is installed."""
+    context = dict(context or _gamescope_user_context())
+    dropin = _gamescope_dropin_path(context)
+    expected = _gamescope_dropin_text()
+    actual = read_text(dropin) if dropin.exists() else ""
+    shim_exists = GAMESCOPE_SHIM.exists()
+    shim_marker = "eGPUBridge Gamescope argument shim" in read_text(GAMESCOPE_SHIM) if shim_exists else False
+    managed_dropin = actual == expected
+    result = {
+        "ok": bool(shim_exists and shim_marker and managed_dropin),
+        "method": "user-systemd-path-shim",
+        "unit": GAMESCOPE_UNIT,
+        "dropin": str(dropin),
+        "dropin_installed": dropin.exists(),
+        "dropin_matches": managed_dropin,
+        "shim": str(GAMESCOPE_SHIM),
+        "shim_exists": shim_exists,
+        "shim_marker": shim_marker,
+        "user": context,
+    }
+    if verify_unit and result["ok"]:
+        unit_result = run(
+            _gamescope_systemctl_base(context) + ["show", GAMESCOPE_UNIT, "--property=LoadState", "--value"],
+            timeout=6,
+        )
+        result["unit_check"] = unit_result
+        result["unit_loaded"] = bool(unit_result.get("ok") and (unit_result.get("out") or "").strip() == "loaded")
+        result["ok"] = bool(result["ok"] and result["unit_loaded"])
+    return result
+
+
+def ensure_gamescope_integration() -> dict:
+    """
+    Install a reversible user-systemd PATH drop-in.
+
+    The Valve-owned gamescope-session script remains untouched. Its `gamescope`
+    invocation resolves to bin/gamescope, which validates and injects only the
+    eGPUBridge-controlled arguments before delegating to /usr/bin/gamescope.
+    """
+    context = _gamescope_user_context()
+    dropin = _gamescope_dropin_path(context)
+    try:
+        if not GAMESCOPE_SHIM.exists():
+            return {"ok": False, "error": f"Gamescope shim is missing: {GAMESCOPE_SHIM}"}
+        if "eGPUBridge Gamescope argument shim" not in read_text(GAMESCOPE_SHIM):
+            return {"ok": False, "error": "Gamescope shim marker is missing"}
+
+        GAMESCOPE_SHIM.chmod(0o755)
+        dropin.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(dropin, _gamescope_dropin_text())
+        dropin.chmod(0o644)
+
+        if getattr(os, "geteuid", lambda: 1)() == 0:
+            uid = int(context["uid"])
+            gid = int(context.get("gid", uid))
+            home = Path(str(context.get("home") or f"/home/{context['username']}"))
+            for path in (
+                home / ".config",
+                home / ".config" / "systemd",
+                home / ".config" / "systemd" / "user",
+                dropin.parent,
+                dropin,
+            ):
+                if path.exists():
+                    os.chown(path, uid, gid)
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"Could not install Gamescope integration: {e}",
+            "dropin": str(dropin),
+        }
+
+    reload_result = run(_gamescope_systemctl_base(context) + ["daemon-reload"], timeout=8)
+    status = gamescope_integration_status(context, verify_unit=True)
+    status["daemon_reload"] = reload_result
+    status["ok"] = bool(status.get("ok") and reload_result.get("ok"))
+    if not status["ok"] and not status.get("error"):
+        status["error"] = "Gamescope user service or eGPUBridge drop-in did not validate"
+    return status
+
+
+def _disabled_feature(feature: str, reason: str) -> dict:
+    return {
+        "ok": False,
+        "disabled": True,
+        "error_code": "feature_disabled_for_safety",
+        "feature": feature,
+        "error": reason,
     }
 
 
@@ -1034,12 +1192,13 @@ def find_internal_edp_connector_id():
                 "source": "modetest",
             }
 
-    # Fallback from our confirmed device.
+    # Do not guess a connector ID. Writing DPMS to the wrong object can blank or
+    # reconfigure an unrelated display on a different handheld/kernel build.
     return {
         "ok": False,
-        "connector_id": "108",
-        "connector_name": "eDP-1",
-        "source": "fallback",
+        "connector_id": None,
+        "connector_name": None,
+        "source": "not-found",
         "error": "connected eDP connector not found in modetest output",
     }
 
@@ -1111,7 +1270,14 @@ def internal_panel_off():
     """
     card_name, conn_name, _ = find_internal_display_card()
     info = find_internal_edp_connector_id()
-    cid = str(info.get("connector_id") or "108")
+    if not info.get("ok") or not info.get("connector_id"):
+        return {
+            "ok": False,
+            "action": "internal_panel_off",
+            "error": info.get("error") or "internal eDP connector was not detected",
+            "connector": info,
+        }
+    cid = str(info["connector_id"])
     fb_path = find_framebuffer()
     vtcon_path = find_framebuffer_console()
 
@@ -1149,7 +1315,14 @@ def internal_panel_on():
     """
     card_name, conn_name, _ = find_internal_display_card()
     info = find_internal_edp_connector_id()
-    cid = str(info.get("connector_id") or "108")
+    if not info.get("ok") or not info.get("connector_id"):
+        return {
+            "ok": False,
+            "action": "internal_panel_on",
+            "error": info.get("error") or "internal eDP connector was not detected",
+            "connector": info,
+        }
+    cid = str(info["connector_id"])
     fb_path = find_framebuffer()
     vtcon_path = find_framebuffer_console()
 
@@ -2152,11 +2325,15 @@ def build_status(heavy: bool = False):
         "recommended_connector": connector,
         "patch_state": get_current_patch_state(),
         "gamescope": current_gamescope_process(),
+        "gamescope_integration": gamescope_integration_status(),
+        "display_transition": _read_display_transition(),
         "paths": {
             "gamescope_session": str(GAMESCOPE_SESSION),
             "backup_original": str(BACKUP_ORIGINAL),
             "backup_last": str(BACKUP_LAST),
             "env_override": str(ENV_OVERRIDE),
+            "gamescope_shim": str(GAMESCOPE_SHIM),
+            "display_transition": str(TRANSITION_PATH),
         },
     }
 
@@ -3159,44 +3336,222 @@ def write_gamescope_wrapper_config(output_order: str, prefer_vk_device: str = "d
     }
 
 
-def restart_gamescope_session_target():
+def _gamescope_vk_device(gs_cmdline: str) -> str:
+    match = re.search(r"--prefer-vk-device(?:=|\s+)([0-9a-fA-F]{4}:[0-9a-fA-F]{4})", gs_cmdline or "")
+    return match.group(1).lower() if match else ""
+
+
+def _gamescope_option_value(gs_cmdline: str, short: str, long: str = "") -> str:
+    names = [re.escape(short)]
+    if long:
+        names.append(re.escape(long))
+    match = re.search(r"(?:^|\s)(?:" + "|".join(names) + r")(?:=|\s+)(\S+)", gs_cmdline or "")
+    return match.group(1).strip("\"'") if match else ""
+
+
+def _gamescope_matches_desired(gs_cmdline: str, desired: dict) -> bool:
+    target = str((desired or {}).get("target") or "")
+    output_order = str((desired or {}).get("output_order") or "")
+    prefer_vk = str((desired or {}).get("prefer_vk_device") or "").lower()
+    live_output = _gamescope_output_order(gs_cmdline)
+    live_vk = _gamescope_vk_device(gs_cmdline)
+
+    if target == "external":
+        connector = str((desired or {}).get("connector") or output_order)
+        if not _output_order_targets_connector(live_output, connector):
+            return False
+        if not prefer_vk or live_vk != prefer_vk:
+            return False
+    elif target == "internal":
+        if not _output_order_targets_internal(live_output):
+            return False
+        if live_vk:
+            return False
+    else:
+        return False
+
+    mode = (desired or {}).get("mode") or {}
+    if mode:
+        expected = {
+            "width": str(mode.get("width") or ""),
+            "height": str(mode.get("height") or ""),
+            "refresh": str(mode.get("refresh") or ""),
+        }
+        actual = {
+            "width": _gamescope_option_value(gs_cmdline, "-W"),
+            "height": _gamescope_option_value(gs_cmdline, "-H"),
+            "refresh": _gamescope_option_value(gs_cmdline, "-r"),
+        }
+        if any(expected[key] and expected[key] != actual[key] for key in expected):
+            return False
+
+    return True
+
+
+def _gamescope_pids(gs_cmdline: str) -> list:
+    pids = []
+    for line in str(gs_cmdline or "").splitlines():
+        match = re.match(r"^\s*(\d+)\s+", line)
+        if match:
+            pids.append(int(match.group(1)))
+    return sorted(set(pids))
+
+
+def _read_display_transition() -> dict:
+    try:
+        data = json.loads(TRANSITION_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_display_transition(target: str, desired: dict) -> dict:
+    now = time.time()
+    transition = {
+        "id": f"{int(time.time_ns())}",
+        "status": "pending",
+        "target": target,
+        "desired": desired,
+        "created_at": now,
+        "updated_at": now,
+    }
+    atomic_write(TRANSITION_PATH, json.dumps(transition, indent=2, ensure_ascii=False) + "\n")
+    log("DISPLAY_TRANSITION " + json.dumps(transition, ensure_ascii=False))
+    return transition
+
+
+def _finish_display_transition(transition: dict, status: str, details=None) -> dict:
+    result = dict(transition or {})
+    result["status"] = status
+    result["updated_at"] = time.time()
+    if details is not None:
+        result["details"] = details
+    try:
+        atomic_write(TRANSITION_PATH, json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    except Exception as e:
+        result["write_error"] = str(e)
+    log("DISPLAY_TRANSITION " + json.dumps(result, ensure_ascii=False))
+    return result
+
+
+def reconcile_display_transition(gs_cmdline=None) -> dict:
+    transition = _read_display_transition()
+    if not transition or transition.get("status") != "pending":
+        return transition
+    gamescope = current_gamescope_process() if gs_cmdline is None else str(gs_cmdline or "")
+    if _gamescope_matches_desired(gamescope, transition.get("desired") or {}):
+        return _finish_display_transition(transition, "completed", {"gamescope": gamescope[-2000:]})
+    age = max(0.0, time.time() - float(transition.get("created_at") or time.time()))
+    if age >= 45:
+        return _finish_display_transition(
+            transition,
+            "failed",
+            {"error": "Gamescope did not reach the requested display state", "age_seconds": round(age, 2)},
+        )
+    return transition
+
+
+def _running_steam_games() -> dict:
+    """Detect Steam game scopes without treating Steam/Game Mode itself as a game."""
+    context = _gamescope_user_context()
+    result = run(
+        _gamescope_systemctl_base(context)
+        + ["list-units", "--type=scope", "--state=running", "--plain", "--no-legend", "--no-pager"],
+        timeout=6,
+    )
+    games = []
+    if result.get("ok"):
+        for line in (result.get("out") or "").splitlines():
+            unit = line.split(None, 1)[0] if line.split() else ""
+            match = re.search(r"(?:app-steam|steam-app)-(\d+)\.scope$", unit)
+            if match:
+                games.append({"appid": int(match.group(1)), "unit": unit, "summary": line.strip()[:500]})
+    return {
+        "ok": bool(result.get("ok")),
+        "games": games,
+        "count": len(games),
+        "user": context,
+        "check": result,
+    }
+
+
+def _wait_for_gamescope_ready(before_pids, desired: dict, timeout_s: float = 18.0) -> dict:
+    started = time.monotonic()
+    deadline = started + max(1.0, float(timeout_s))
+    samples = 0
+    last_cmdline = ""
+    before = set(before_pids or [])
+    while time.monotonic() < deadline:
+        last_cmdline = current_gamescope_process()
+        current = set(_gamescope_pids(last_cmdline))
+        samples += 1
+        if current and (not before or bool(current - before)) and _gamescope_matches_desired(last_cmdline, desired):
+            return {
+                "ok": True,
+                "ready": True,
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "before_pids": sorted(before),
+                "current_pids": sorted(current),
+                "samples": samples,
+                "gamescope": last_cmdline[-2000:],
+            }
+        time.sleep(0.25)
+    return {
+        "ok": False,
+        "ready": False,
+        "error": "Timed out waiting for Gamescope to consume the requested display configuration",
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "before_pids": sorted(before),
+        "current_pids": _gamescope_pids(last_cmdline),
+        "samples": samples,
+        "gamescope": last_cmdline[-2000:],
+        "desired": desired,
+    }
+
+
+def restart_gamescope_session_target(desired: dict):
     """
     Restart current user's Gamescope session target.
     Works from Decky root backend by calling the active Gamescope user's systemd manager.
     """
-    backend_uid = getattr(os, "geteuid", lambda: 1)()
     context = _gamescope_user_context()
-    username = context["username"]
-    session_uid = int(context["uid"])
-
-    if backend_uid == 0:
-        cmd = [
-            "/usr/bin/runuser", "-u", username, "--",
-            "/usr/bin/env",
-            f"XDG_RUNTIME_DIR=/run/user/{session_uid}",
-            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{session_uid}/bus",
-            "/usr/bin/systemctl", "--user", "restart", "gamescope-session.target",
-        ]
-    else:
-        cmd = ["/usr/bin/systemctl", "--user", "restart", "gamescope-session.target"]
+    cmd = _gamescope_systemctl_base(context) + ["restart", GAMESCOPE_TARGET]
+    before_cmdline = current_gamescope_process()
+    before_pids = _gamescope_pids(before_cmdline)
 
     log("RUN CLEAN: " + " ".join(cmd))
-    p = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=20,
-        env={k: v for k, v in os.environ.items() if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH", "PYTHONHOME")},
-    )
+    systemctl = {"rc": -1, "out": "", "err": ""}
+    try:
+        p = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20,
+            env={k: v for k, v in os.environ.items() if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH", "PYTHONHOME")},
+        )
+        systemctl = {"rc": p.returncode, "out": p.stdout[-2000:], "err": p.stderr[-2000:]}
+    except subprocess.TimeoutExpired as e:
+        systemctl = {
+            "rc": -1,
+            "out": str(e.stdout or "")[-2000:],
+            "err": (str(e.stderr or "") + "\nsystemctl restart timed out")[-2000:],
+        }
+    except Exception as e:
+        systemctl = {"rc": -1, "out": "", "err": str(e)[-2000:]}
 
+    # A user-manager restart can disconnect its caller or return non-zero while the
+    # replacement session is already starting. The live process is authoritative.
+    readiness = _wait_for_gamescope_ready(before_pids, desired)
     return {
-        "ok": p.returncode == 0,
-        "rc": p.returncode,
-        "out": p.stdout[-2000:],
-        "err": p.stderr[-2000:],
+        "ok": bool(readiness.get("ok")),
+        "rc": systemctl["rc"],
+        "out": systemctl["out"],
+        "err": systemctl["err"],
         "cmd": cmd,
         "user": context,
+        "readiness": readiness,
+        "systemctl_ok": systemctl["rc"] == 0,
     }
 
 
@@ -3244,39 +3599,60 @@ def _decky_str(args, kwargs, key, default):
 
 
 
-def _apply_restart_sync():
-    """Blocking: gamescope restart + sleep + panel operations."""
-    r = restart_gamescope_session_target()
-    time.sleep(6)
+def _apply_restart_sync(desired: dict, transition: dict):
+    """Restart Game Mode and turn off the internal panel only after verification."""
     try:
         hdmi_on = hdmi_panel_on()
-        log(f"hdmi_panel_on: {hdmi_on}")
+        log(f"hdmi_panel_on before restart: {hdmi_on}")
     except Exception as e:
         log(f"hdmi_panel_on EXCEPTION: {e}")
-    try:
-        panel_result = internal_panel_off()
-        log(f"internal_panel_off: {panel_result}")
-    except Exception as e:
-        log(f"internal_panel_off EXCEPTION: {e}")
-    return r
+
+    restart = restart_gamescope_session_target(desired)
+    if restart.get("ok"):
+        try:
+            panel_result = internal_panel_off()
+            restart["internal_panel_off"] = panel_result
+            log(f"internal_panel_off: {panel_result}")
+        except Exception as e:
+            restart["internal_panel_off"] = {"ok": False, "error": str(e)}
+            log(f"internal_panel_off EXCEPTION: {e}")
+        restart["transition"] = _finish_display_transition(transition, "completed", restart.get("readiness"))
+    else:
+        try:
+            internal_panel_on()
+        except Exception as e:
+            restart["internal_panel_recovery_error"] = str(e)
+        restart["transition"] = _finish_display_transition(transition, "failed", restart.get("readiness"))
+    return restart
 
 
-def _restore_restart_sync():
-    """Blocking: gamescope restart + sleep + hdmi panel off."""
-    r = restart_gamescope_session_target()
-    time.sleep(6)
-    try:
-        hdmi_result = hdmi_panel_off()
-        log(f"hdmi_panel_off: {hdmi_result}")
-    except Exception as e:
-        log(f"hdmi_panel_off EXCEPTION: {e}")
-    return r
+def _restore_restart_sync(desired: dict, transition: dict):
+    """Restart Game Mode and turn off the external signal only after verification."""
+    restart = restart_gamescope_session_target(desired)
+    if restart.get("ok"):
+        try:
+            hdmi_result = hdmi_panel_off()
+            restart["external_panel_off"] = hdmi_result
+            log(f"hdmi_panel_off: {hdmi_result}")
+        except Exception as e:
+            restart["external_panel_off"] = {"ok": False, "error": str(e)}
+            log(f"hdmi_panel_off EXCEPTION: {e}")
+        restart["transition"] = _finish_display_transition(transition, "completed", restart.get("readiness"))
+    else:
+        restart["transition"] = _finish_display_transition(transition, "failed", restart.get("readiness"))
+    return restart
 
 
 class Plugin:
     async def _main(self):
         log(f"init v{VERSION}")
         status = build_status()
+        try:
+            transition = reconcile_display_transition(status.get("gamescope") or "")
+            if transition:
+                log("init transition state: " + json.dumps(transition, ensure_ascii=False))
+        except Exception as e:
+            log(f"init transition reconcile failed: {e}")
         # If gamescope is already in external/HDMI mode, turn off internal backlight
         display_target = status.get("display_target") or "unknown"
         external_active = display_target == "external"
@@ -3439,6 +3815,12 @@ class Plugin:
         It restores the internal gamescope config, restarts sddm/Steam UI,
         and writes a log telling the user when unplugging is expected to be safe.
         """
+        if not UNSAFE_HARDWARE_CONTROLS_ENABLED:
+            return _disabled_feature(
+                "prepare_for_unplug",
+                "Safe Unplug is disabled until exact USB4 topology, mounted-storage checks, and internal-display verification are implemented.",
+            )
+
         status = build_status()
         egpu = (status or {}).get("egpu") or {}
         external = (status or {}).get("external_display") or {}
@@ -3542,6 +3924,7 @@ class Plugin:
     @staticmethod
     async def apply_egpu_mode(*args, **kwargs):
         restart = _decky_bool(args, kwargs, "restart", False)
+        allow_running_game = _decky_bool(args, kwargs, "allow_running_game", False)
         explicit_mode_request = any(_decky_call_value(args, kwargs, k, None) is not None for k in ("width", "height", "refresh"))
         width = _decky_int(args, kwargs, "width", DEFAULT_WIDTH)
         height = _decky_int(args, kwargs, "height", DEFAULT_HEIGHT)
@@ -3567,14 +3950,76 @@ class Plugin:
         if not vendor or not device:
             return {"ok": False, "error": "Не удалось определить vendor/device eGPU"}
 
-        output_name = connector.get("name") or "HDMI-A-1"
+        output_name = str(connector.get("name") or "").strip()
+        if not output_name:
+            return {"ok": False, "error": "Connected eGPU display has no usable DRM connector name"}
         vendor_device = f"{vendor}:{device}"
         # FPS/MES stability profile:
         # HDMI-only is safer for TV/eGPU mode.
         # Do NOT append eDP-1 here, otherwise internal scanout stays enabled.
         output_order = f"{output_name}"
 
+        fingerprint = {
+            "card": egpu.get("card"),
+            "pci": egpu.get("pci"),
+            "vendor": egpu.get("vendor"),
+            "device": egpu.get("device"),
+        }
+        if restart and not fingerprint.get("pci"):
+            return {
+                "ok": False,
+                "error_code": "egpu_identity_missing",
+                "error": "Cannot switch displays without an exact eGPU PCI identity",
+                "egpu": fingerprint,
+            }
+
+        mode = {
+            "width": int(width),
+            "height": int(height),
+            "refresh": int(refresh),
+        } if explicit_mode_request else {}
+        desired = {
+            "target": "external",
+            "output_order": output_order,
+            "connector": output_name,
+            "prefer_vk_device": vendor_device,
+            "mode": mode,
+            "egpu": fingerprint,
+        }
+
+        restart_needed = bool(restart and not _gamescope_matches_desired(status.get("gamescope") or "", desired))
+        if restart_needed:
+            running_games = _running_steam_games()
+            if not running_games.get("ok"):
+                return {
+                    "ok": False,
+                    "error_code": "running_game_check_failed",
+                    "error": "Could not verify whether a Steam game is running; display reload was not started.",
+                    "running_games": running_games,
+                }
+            if running_games.get("games") and not allow_running_game:
+                return {
+                    "ok": False,
+                    "requires_confirmation": True,
+                    "error_code": "running_game",
+                    "error": "Close the running game before restarting Game Mode for the display switch.",
+                    "running_games": running_games,
+                }
+
+            integration = ensure_gamescope_integration()
+            if not integration.get("ok"):
+                return {
+                    "ok": False,
+                    "error_code": "gamescope_integration_unavailable",
+                    "error": integration.get("error") or "Gamescope integration is not active",
+                    "gamescope_integration": integration,
+                }
+        else:
+            integration = gamescope_integration_status()
+
         result = write_gamescope_wrapper_config(output_order, vendor_device)
+        result["gamescope_integration"] = integration
+        result["desired"] = desired
         result["user_environment"] = update_gamescope_user_environment(
             values={"MESA_VK_DEVICE_SELECT": vendor_device}
         )
@@ -3591,10 +4036,18 @@ class Plugin:
         result["mode_request"] = f"{int(width)}x{int(height)}@{int(refresh)}"
 
         if restart and result.get("ok"):
-            import asyncio
-            loop = asyncio.get_event_loop()
-            restart_result = await loop.run_in_executor(None, _apply_restart_sync)
-            result["restart_gamescope_session"] = restart_result
+            if not restart_needed:
+                result["restart_skipped"] = True
+                result["restart_reason"] = "requested display state is already active"
+            else:
+                transition = _write_display_transition("external", desired)
+                import asyncio
+                loop = asyncio.get_event_loop()
+                restart_result = await loop.run_in_executor(None, _apply_restart_sync, desired, transition)
+                result["restart_gamescope_session"] = restart_result
+                result["ok"] = bool(restart_result.get("ok"))
+                if not result["ok"]:
+                    result["error"] = (restart_result.get("readiness") or {}).get("error") or "Game Mode restart failed"
 
         result["status_after"] = build_status()
         return result
@@ -3602,16 +4055,63 @@ class Plugin:
 
     @staticmethod
     async def restore_internal_mode(*args, **kwargs):
+        restart_value = _decky_call_value(args, kwargs, "restart", False)
         restart = _decky_bool(args, kwargs, "restart", False)
+        allow_running_game = _decky_bool(args, kwargs, "allow_running_game", False)
         log(f"UI_CALL restore_internal_mode restart={restart}")
         """
         Restore to internal display using safe wrapper config.
         Do NOT patch /usr/lib/steamos/gamescope-session.
         """
-        sleep_after_restore = str(restart).lower() in ("sleep", "suspend", "prepare_sleep", "prepare-sleep")
+        sleep_after_restore = str(restart_value).lower() in ("sleep", "suspend", "prepare_sleep", "prepare-sleep")
+        if sleep_after_restore:
+            restart = True
         restart_requested = bool(restart)
 
+        desired = {
+            "target": "internal",
+            "output_order": "*,eDP-1",
+            "connector": "eDP-1",
+            "prefer_vk_device": "disabled",
+            "mode": {},
+        }
+
+        status_before = build_status(heavy=False) if restart_requested else {}
+        restart_needed = bool(
+            restart_requested
+            and not _gamescope_matches_desired(status_before.get("gamescope") or "", desired)
+        )
+        if restart_needed:
+            running_games = _running_steam_games()
+            if not running_games.get("ok"):
+                return {
+                    "ok": False,
+                    "error_code": "running_game_check_failed",
+                    "error": "Could not verify whether a Steam game is running; display reload was not started.",
+                    "running_games": running_games,
+                }
+            if running_games.get("games") and not allow_running_game:
+                return {
+                    "ok": False,
+                    "requires_confirmation": True,
+                    "error_code": "running_game",
+                    "error": "Close the running game before restarting Game Mode for the display switch.",
+                    "running_games": running_games,
+                }
+            integration = ensure_gamescope_integration()
+            if not integration.get("ok"):
+                return {
+                    "ok": False,
+                    "error_code": "gamescope_integration_unavailable",
+                    "error": integration.get("error") or "Gamescope integration is not active",
+                    "gamescope_integration": integration,
+                }
+        else:
+            integration = gamescope_integration_status()
+
         result = write_gamescope_wrapper_config("*,eDP-1", "disabled")
+        result["gamescope_integration"] = integration
+        result["desired"] = desired
         result["user_environment"] = update_gamescope_user_environment(
             unset=["MESA_VK_DEVICE_SELECT"]
         )
@@ -3628,12 +4128,20 @@ class Plugin:
             pass
 
         if restart_requested and result.get("ok"):
-            import asyncio
-            loop = asyncio.get_event_loop()
-            restart_result = await loop.run_in_executor(None, _restore_restart_sync)
-            result["restart_gamescope_session"] = restart_result
+            if not restart_needed:
+                result["restart_skipped"] = True
+                result["restart_reason"] = "requested display state is already active"
+            else:
+                transition = _write_display_transition("internal", desired)
+                import asyncio
+                loop = asyncio.get_event_loop()
+                restart_result = await loop.run_in_executor(None, _restore_restart_sync, desired, transition)
+                result["restart_gamescope_session"] = restart_result
+                result["ok"] = bool(restart_result.get("ok"))
+                if not result["ok"]:
+                    result["error"] = (restart_result.get("readiness") or {}).get("error") or "Game Mode restart failed"
 
-        if sleep_after_restore:
+        if sleep_after_restore and result.get("ok"):
             sleep_run = run(["/usr/bin/systemctl", "suspend"], timeout=10)
             result["sleep_run"] = sleep_run
 
@@ -3644,6 +4152,11 @@ class Plugin:
     @staticmethod
     async def safe_disconnect(*args, **kwargs):
         log("UI_CALL safe_disconnect")
+        if not UNSAFE_HARDWARE_CONTROLS_ENABLED:
+            return _disabled_feature(
+                "safe_disconnect",
+                "Safe Disconnect is disabled until the selected eGPU, USB4 tunnel, and mounted storage can be verified.",
+            )
         return safe_disconnect_egpu()
 
     @staticmethod
@@ -6183,6 +6696,11 @@ async def gpu_set_power_cap(*args, **kwargs):
 
 async def gpu_set_fan_control(*args, **kwargs):
     """Set fan mode: auto (default driver) or manual with PWM value 0-255."""
+    if not UNSAFE_HARDWARE_CONTROLS_ENABLED:
+        return _disabled_feature(
+            "gpu_set_fan_control",
+            "Manual fan control is disabled until the GPD G1 hwmon interface and a thermal fail-safe are verified.",
+        )
     mode = None
     pwm = None
     if args and isinstance(args[0], dict):
@@ -6400,6 +6918,11 @@ async def gpu_get_od_clocks(*args, **kwargs):
 
 async def gpu_set_od_clocks(*args, **kwargs):
     """Write OD clock/voltage values and commit."""
+    if not UNSAFE_HARDWARE_CONTROLS_ENABLED:
+        return _disabled_feature(
+            "gpu_set_od_clocks",
+            "Clock and voltage writes are disabled until live range validation and rollback are implemented.",
+        )
     import pathlib
     sclk_mhz = None
     mclk_mhz = None
@@ -6578,6 +7101,11 @@ def _nvidia_install_sync():
 
 
 async def nvidia_install_driver(*args, **kwargs):
+    if not UNSAFE_HARDWARE_CONTROLS_ENABLED:
+        return _disabled_feature(
+            "nvidia_install_driver",
+            "In-plugin NVIDIA driver installation is disabled in this AMD-focused safety build.",
+        )
     if not _begin_operation("nvidia_install"):
         return {"ok": False, "error": "Another operation in progress: " + str(_operation_lock)}
     try:
@@ -6624,6 +7152,11 @@ def _nvidia_uninstall_sync():
 
 
 async def nvidia_uninstall_driver(*args, **kwargs):
+    if not UNSAFE_HARDWARE_CONTROLS_ENABLED:
+        return _disabled_feature(
+            "nvidia_uninstall_driver",
+            "In-plugin NVIDIA driver removal is disabled in this AMD-focused safety build.",
+        )
     if not _begin_operation("nvidia_uninstall"):
         return {"ok": False, "error": "Another operation in progress"}
     try:
@@ -6740,6 +7273,11 @@ def _nvidia_activate_sync():
 
 
 async def nvidia_activate(*args, **kwargs):
+    if not UNSAFE_HARDWARE_CONTROLS_ENABLED:
+        return _disabled_feature(
+            "nvidia_activate",
+            "NVIDIA activation is disabled in this AMD-focused safety build.",
+        )
     if not _begin_operation("nvidia_activate"):
         return {"ok": False, "error": "Another operation in progress"}
     try:
@@ -6816,6 +7354,11 @@ def _nvidia_deactivate_sync():
 
 
 async def nvidia_deactivate(*args, **kwargs):
+    if not UNSAFE_HARDWARE_CONTROLS_ENABLED:
+        return _disabled_feature(
+            "nvidia_deactivate",
+            "NVIDIA deactivation is disabled in this AMD-focused safety build.",
+        )
     if not _begin_operation("nvidia_deactivate"):
         return {"ok": False, "error": "Another operation in progress"}
     try:

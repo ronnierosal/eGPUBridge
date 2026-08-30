@@ -71,7 +71,10 @@ function Invoke-RemoteScript {
         [switch]$Interactive
     )
 
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Script))
+    # PowerShell here-strings use the host platform's line endings. Normalize
+    # them before piping the decoded script to Bash on SteamOS.
+    $normalizedScript = $Script.Replace("`r`n", "`n").Replace("`r", "`n")
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($normalizedScript))
     $shellCommand = if ($AsRoot -and $Interactive) {
         "sudo bash"
     }

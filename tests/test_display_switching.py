@@ -13,6 +13,19 @@ import main
 
 
 class RemoteHarnessTests(unittest.TestCase):
+    def test_remote_scripts_are_normalized_to_linux_line_endings(self):
+        harness = (Path(__file__).parents[1] / "scripts" / "ally-remote-test.ps1").read_text()
+        remote_start = harness.index("function Invoke-RemoteScript")
+        remote_end = harness.index("function Find-RemotePluginDirectory", remote_start)
+        remote_runner = harness[remote_start:remote_end]
+
+        self.assertIn(
+            '$normalizedScript = $Script.Replace("`r`n", "`n").Replace("`r", "`n")',
+            remote_runner,
+        )
+        self.assertIn("GetBytes($normalizedScript)", remote_runner)
+        self.assertNotIn("GetBytes($Script)", remote_runner)
+
     def test_snapshot_prefers_active_runtime_config_over_legacy_state(self):
         harness = (Path(__file__).parents[1] / "scripts" / "ally-remote-test.ps1").read_text()
         snapshot_start = harness.index("function Save-Snapshot")

@@ -82,6 +82,19 @@ class DisplayTargetTests(unittest.TestCase):
 
 
 class SystemCommandTests(unittest.TestCase):
+    def test_mesa_version_is_cached_across_status_refreshes(self):
+        completed = {"ok": True, "out": "mesa 25.3.0.213835.radeonsi_25.3.0-4.1"}
+        with mock.patch.object(main, "run", return_value=completed) as run_mock, mock.patch.object(
+            main.time, "monotonic", side_effect=[100.0, 105.0, 401.0]
+        ), mock.patch.dict(
+            main._mesa_version_cache, {"value": "", "checked_at": 0.0}, clear=True
+        ):
+            self.assertEqual(main._get_mesa_version(), "25.3")
+            self.assertEqual(main._get_mesa_version(), "25.3")
+            self.assertEqual(main._get_mesa_version(), "25.3")
+
+        self.assertEqual(run_mock.call_count, 2)
+
     def test_system_commands_drop_decky_bundled_library_environment(self):
         completed = mock.Mock(returncode=0, stdout="mesa 1.2.3\n", stderr="")
         bundled_environment = {
@@ -122,6 +135,44 @@ class SystemCommandTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertNotIn("reported_failure", result)
+
+
+class HardwareCompatibilityTests(unittest.TestCase):
+    def test_ally_x_dmi_variant_is_recognized(self):
+        values = {
+            "/sys/devices/virtual/dmi/id/sys_vendor": "ASUSTeK COMPUTER INC.",
+            "/sys/devices/virtual/dmi/id/product_name": "ROG Ally X RC72LA_RC72LA",
+        }
+        with mock.patch.object(main, "_read_text", side_effect=lambda path: values.get(str(path), "")):
+            hint = main.detect_device_hint()
+
+        self.assertTrue(hint["known"])
+        self.assertEqual(hint["friendly_name"], "ASUS ROG Ally X")
+
+    def test_validated_ally_x_g1_pair_reports_sleep_warning(self):
+        warning = main._sleep_compatibility_status(
+            {
+                "device_hint": {
+                    "vendor": "ASUSTeK COMPUTER INC.",
+                    "product_name": "ROG Ally X RC72LA_RC72LA",
+                    "friendly_name": "ASUS ROG Ally X",
+                },
+                "egpu": {"vendor": "0x1002", "device": "0x7480"},
+            }
+        )
+
+        self.assertTrue(warning["warning"])
+        self.assertEqual(warning["code"], "ally_x_gpd_g1_immediate_acpi_wake")
+
+    def test_unvalidated_hardware_does_not_report_sleep_warning(self):
+        warning = main._sleep_compatibility_status(
+            {
+                "device_hint": {"friendly_name": "Steam Deck OLED"},
+                "egpu": {"vendor": "0x1002", "device": "0x7480"},
+            }
+        )
+
+        self.assertFalse(warning["warning"])
 
 
 class GamescopeEnvironmentTests(unittest.TestCase):

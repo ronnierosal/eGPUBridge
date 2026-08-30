@@ -891,6 +891,8 @@ function App(props) {
     var pcieLinkOk = pcieLink && pcieLink.ok && pcieLink.width && pcieLink.speed;
     var statusContent = egpu ? (pcieLinkOk ? ("eGPU  •  " + pcieLink.width + "  •  " + pcieLink.speed) : "eGPU") : "eGPU not connected";
     var connector = status && status.recommended_connector ? status.recommended_connector : null;
+    var sleepCompatibility = status && status.sleep_compatibility ? status.sleep_compatibility : null;
+    var showSleepCompatibilityWarning = !!(sleepCompatibility && sleepCompatibility.warning && egpu);
     var gpuLabel = status && status.gpu_label ? status.gpu_label : (egpu ? "External GPU" : "Internal GPU");
     var igpuLabel = status && status.igpu_label ? status.igpu_label : "iGPU";
     function shortGpuName(fullName) {
@@ -1144,7 +1146,28 @@ function App(props) {
         style: { fontSize: "10px", fontWeight: "900", lineHeight: "12px", color: "#FACC15", letterSpacing: ".08em", textTransform: "uppercase", fontFamily: "'Share Tech Mono', 'Courier New', monospace", textAlign: "center", width: "100%" }
     }, "SMART switch to"), e("span", {
         style: { fontSize: "13px", fontWeight: "900", lineHeight: "15px", color: "rgba(245,248,255,.96)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "center", width: "100%" }
-    }, externalActive ? (internalText || "Internal") : (externalText !== "External display" ? externalText : (connectorText !== "none" ? connectorText + " TV" : "TV"))))))),
+    }, externalActive ? (internalText || "Internal") : (externalText !== "External display" ? externalText : (connectorText !== "none" ? connectorText + " TV" : "TV"))))))), showSleepCompatibilityWarning ? e("div", {
+        style: {
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "8px",
+            padding: "8px 10px",
+            marginBottom: "6px",
+            borderRadius: "10px",
+            background: "rgba(250, 204, 21, .10)",
+            border: "1px solid rgba(250, 204, 21, .32)",
+            color: "rgba(255, 239, 170, .96)",
+            boxSizing: "border-box"
+        }
+    }, e("span", {
+        style: { fontSize: "15px", lineHeight: "16px", flex: "0 0 auto" }
+    }, "⚠"), e("span", {
+        style: { display: "flex", flexDirection: "column", gap: "2px", minWidth: "0" }
+    }, e("span", {
+        style: { fontSize: "10px", lineHeight: "12px", fontWeight: "900" }
+    }, sleepCompatibility.title || "Sleep compatibility"), e("span", {
+        style: { fontSize: "9.5px", lineHeight: "12px", fontWeight: "700", opacity: ".90" }
+    }, sleepCompatibility.message || "This eGPU may wake the Ally immediately while connected."))) : null,
     // Dashboard rows (R4)
     e("div", {
         className: "egbDashboard91007R4",

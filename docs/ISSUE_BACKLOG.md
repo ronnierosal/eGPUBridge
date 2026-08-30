@@ -502,8 +502,9 @@ Remaining acceptance criteria:
 
 - Determine whether an Ally/G1 firmware, embedded-controller, or power-delivery
   update can prevent the ACPI wake while the G1 remains attached.
-- Surface a clear attached-G1 sleep compatibility warning; do not silently change
-  kernel wake permissions that hardware testing showed were ineffective.
+- Visually validate the new attached-G1 sleep compatibility warning. It is scoped
+  to the hardware-validated Ally X plus RX 7600M XT pair and does not change the
+  ineffective kernel wake permissions.
 - Only test removing the G1 during sleep after the platform can sustain attached
   sleep; the current immediate ACPI wake prevents that scenario.
 - Hardware-validate that slow G1 enumeration is not mistaken for removal.
@@ -570,7 +571,7 @@ Ally all passed the follow-up hardware test.
 
 ### EGB-032 - Cache stable platform metadata during dashboard polling
 
-Status: Open - reproduced on the native Ally X/GPD G1 dashboard 2026-08-30
+Status: Implemented with regression coverage; hardware validation pending
 
 While the Quick Access panel is visible, its five-second status refresh runs
 `pacman -Q mesa` every time even though the installed Mesa package cannot normally
@@ -579,6 +580,10 @@ throughout the attached-G1 test. Cache stable package metadata for a bounded per
 or plugin lifetime, invalidate it after relevant maintenance actions, and keep live
 GPU/link/display state on the normal refresh cadence. Add a regression test proving
 repeated status calls do not repeatedly spawn the package manager.
+
+Mesa package metadata is now cached for five minutes while live GPU, link, sensor,
+and display state retains the normal dashboard refresh cadence. The regression
+suite proves repeated reads use the cache and a later read refreshes after expiry.
 
 ## Completed in the fork, pending hardware verification
 
@@ -595,7 +600,7 @@ repeated status calls do not repeatedly spawn the package manager.
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Forty-one deterministic tests and CI checks are passing locally.
+- Forty-five deterministic tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 

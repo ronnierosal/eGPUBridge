@@ -169,7 +169,17 @@ def detect_device_hint():
     product = _read_text("/sys/devices/virtual/dmi/id/product_name")
     if not vendor or not product:
         return None
-    friendly = DEVICE_HINTS.get((vendor, product))
+    vendor_lower = vendor.lower()
+    product_lower = product.lower()
+    friendly = None
+    if "asustek" in vendor_lower and (
+        "rog ally x" in product_lower or "rc72la" in product_lower or "rc72l" in product_lower
+    ):
+        friendly = "ASUS ROG Ally X"
+    elif "asustek" in vendor_lower and ("rog ally" in product_lower or "rc71l" in product_lower):
+        friendly = "ASUS ROG Ally"
+    if friendly is None:
+        friendly = DEVICE_HINTS.get((vendor, product))
     if not friendly:
         for (v, p), label in DEVICE_HINTS.items():
             if v == vendor and product.startswith(p.split()[0]):
@@ -350,6 +360,36 @@ def _system_subprocess_env():
     for key in _BUNDLED_RUNTIME_ENV_VARS:
         env.pop(key, None)
     return env
+
+
+MESA_VERSION_CACHE_SECONDS = 300.0
+_mesa_version_cache = {"value": "", "checked_at": 0.0}
+_mesa_version_cache_lock = threading.Lock()
+
+
+def _parse_mesa_version(package_output: str) -> str:
+    parts = str(package_output or "").strip().split()
+    if len(parts) < 2:
+        return ""
+    version_parts = parts[1].split(".")
+    return ".".join(version_parts[:2]) if len(version_parts) >= 2 else parts[1]
+
+
+def _get_mesa_version(refresh: bool = False) -> str:
+    """Cache stable package metadata so live status polling stays lightweight."""
+    now = time.monotonic()
+    with _mesa_version_cache_lock:
+        checked_at = float(_mesa_version_cache.get("checked_at") or 0.0)
+        if not refresh and checked_at and (now - checked_at) < MESA_VERSION_CACHE_SECONDS:
+            return str(_mesa_version_cache.get("value") or "")
+        try:
+            package_output = run(["pacman", "-Q", "mesa"], timeout=3).get("out", "")
+            value = _parse_mesa_version(package_output)
+        except Exception:
+            value = ""
+        _mesa_version_cache["value"] = value
+        _mesa_version_cache["checked_at"] = now
+        return value
 
 
 def run(cmd, timeout=12):
@@ -2363,6 +2403,35 @@ def get_cpu_mode_status():
         }
 
 
+def _sleep_compatibility_status(status_obj: dict) -> dict:
+    """Return warnings only for hardware combinations validated in this project."""
+    hint = (status_obj or {}).get("device_hint") or {}
+    egpu = (status_obj or {}).get("egpu") or {}
+    vendor = str(hint.get("vendor") or "").lower()
+    product = str(hint.get("product_name") or "").lower()
+    friendly = str(hint.get("friendly_name") or "").lower()
+    is_ally_x = bool(
+        "asustek" in vendor
+        and ("rog ally x" in product or "rc72la" in product or "rc72l" in product)
+    ) or friendly == "asus rog ally x"
+    is_rx_7600m_xt = (
+        str(egpu.get("vendor") or "").lower() == "0x1002"
+        and str(egpu.get("device") or "").lower() == "0x7480"
+    )
+    if not (is_ally_x and is_rx_7600m_xt):
+        return {"warning": False, "code": ""}
+    return {
+        "warning": True,
+        "code": "ally_x_gpd_g1_immediate_acpi_wake",
+        "title": "Sleep compatibility",
+        "message": (
+            "This GPD G1 may wake the ROG Ally X immediately. For reliable sleep, "
+            "switch to the Ally screen, then power off and disconnect the G1."
+        ),
+        "source": "hardware_validation_2026_08_30",
+    }
+
+
 def build_status(heavy: bool = False):
     cards = scan_cards()
     egpu = pick_egpu(cards)
@@ -2409,6 +2478,10 @@ def build_status(heavy: bool = False):
         status["device_hint"] = detect_device_hint()
     except Exception:
         status["device_hint"] = None
+    try:
+        status["sleep_compatibility"] = _sleep_compatibility_status(status)
+    except Exception:
+        status["sleep_compatibility"] = {"warning": False, "code": ""}
 
     # v0.7.10:
     # Do not write last_status.json here.
@@ -2435,20 +2508,7 @@ def build_status(heavy: bool = False):
     except Exception:
         status["egpu_driver"] = "unknown"
 
-    try:
-        mesa_out = run(["pacman", "-Q", "mesa"], timeout=3).get("out", "")
-        if mesa_out:
-            # "mesa 26.1.0.221388.radeonsi_26.1.0-1" -> "26.1"
-            parts = mesa_out.strip().split()
-            if len(parts) >= 2:
-                ver = parts[1].split(".")
-                status["mesa_version"] = ver[0] + "." + ver[1] if len(ver) >= 2 else parts[1]
-            else:
-                status["mesa_version"] = ""
-        else:
-            status["mesa_version"] = ""
-    except Exception:
-        status["mesa_version"] = ""
+    status["mesa_version"] = _get_mesa_version()
 
     try:
         conn = status.get("recommended_connector") or {}

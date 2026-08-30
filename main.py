@@ -3806,7 +3806,7 @@ _display_restart_jobs = {}
 _display_restart_jobs_lock = threading.Lock()
 
 
-def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: float = 3.0) -> dict:
+def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: float = 1.0) -> dict:
     """Schedule a restart after Decky has had time to return the accepted RPC."""
     transition_id = str((transition or {}).get("id") or "")
     if not transition_id:

@@ -13,6 +13,9 @@ Local capture: `test-results/20260830-123448/` (intentionally ignored by Git).
 Native-handoff follow-up capture: `test-results/20260830-132108/`
 (intentionally ignored by Git).
 
+Native confirmation follow-up capture: `test-results/20260830-133757/`
+(intentionally ignored by Git).
+
 ## Result
 
 Primary display switching passed:
@@ -46,6 +49,14 @@ it was on the wrong input, while the Ally panel had intentionally been disabled;
 selecting the G1 input exposed the already-running external session. EGB-002 and
 EGB-031 track the longer notice window and native TV-input confirmation added from
 this observation.
+
+The next follow-up visually confirmed the corrected `RX 7600M XT · Mesa 25.3`
+dashboard label and native TV-input confirmation. External output activated and
+the operator returned to the Ally; the internal durable transition completed in
+approximately 4.97 seconds with no Decky websocket error. The Decky toast remained
+invisible even with a three-second delay. Because the modal provides the warning
+before any mutation and passed on hardware, the toast dependency was removed and
+the one-second asynchronous RPC delay restored.
 
 ## Findings requiring follow-up
 

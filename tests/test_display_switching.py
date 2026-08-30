@@ -300,9 +300,9 @@ class ApplyModeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NativeHandoffWrapperTests(unittest.IsolatedAsyncioTestCase):
-    def test_deferred_restart_leaves_time_for_the_decky_notice(self):
+    def test_deferred_restart_leaves_time_for_the_rpc_response(self):
         delay = inspect.signature(main._schedule_display_restart).parameters["delay_s"].default
-        self.assertGreaterEqual(delay, 3.0)
+        self.assertEqual(delay, 1.0)
 
     async def test_deferred_internal_handoff_does_not_delay_rpc_for_tv_power(self):
         accepted = {"ok": True, "accepted": True, "transition": {"id": "transition-2"}}

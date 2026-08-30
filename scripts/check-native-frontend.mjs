@@ -39,6 +39,9 @@ if (!source.includes("confirmExternalDisplayHandoff") || !source.includes("Confi
 if (source.includes('"ASMedia 246x \\u00b7 "')) {
   failures.push("Dock summary still hard-codes the bridge name instead of the detected GPU model");
 }
+if (source.includes("toaster.toast")) {
+  failures.push("Display handoff still depends on a toast that failed Ally visual validation");
+}
 
 if (failures.length) {
   for (const failure of failures) console.error(`ERROR: ${failure}`);

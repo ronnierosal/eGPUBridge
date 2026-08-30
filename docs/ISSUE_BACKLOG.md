@@ -39,8 +39,8 @@ Acceptance criteria:
 
 ### EGB-002 - Make the Game Mode reload transactional and event-driven
 
-Status: Partially implemented; asynchronous Decky RPC handoff passed an external/internal
-hardware round trip, but the one-second notification window failed visual validation
+Status: Partially implemented; asynchronous Decky RPC handoff and the native
+pre-switch confirmation passed external/internal hardware validation
 
 The demo video shows that selecting the external screen restarts the Game Mode
 session. This is not a device reboot: the plugin calls
@@ -65,8 +65,10 @@ it dropped the successful RPC result because the restart had already disconnecte
 the calling socket. A later same-day pass proved the scheduled RPC handoff itself:
 both durable transitions completed, no websocket drop/error was logged, and the
 external/internal totals were about 5.38 and 4.94 seconds. The operator did not see
-the notification before restart, so the default deferred restart window is now
-three seconds and the external path first presents a native TV-input confirmation.
+the notification before restart on either a one-second or three-second window.
+The visible native TV-input confirmation is now the authoritative warning, the
+unreliable toast dependency was removed, and the efficient one-second RPC handoff
+delay was restored.
 
 Relevant code:
 
@@ -333,8 +335,8 @@ Foundation completed on the feature branch:
 - Decky's native Quick Access visibility hook pauses status polling while the
   panel is closed.
 - Display switches can return a durable accepted transition before a scheduled
-  Gamescope restart. Hardware proved the clean RPC handoff; a longer notice window
-  and native TV-input confirmation are pending a follow-up visual pass.
+  Gamescope restart. Hardware proved the clean RPC handoff and native TV-input
+  confirmation; Decky toast delivery was not reliable and is no longer required.
 
 Relevant code: [`src/index.tsx`](../src/index.tsx)
 
@@ -520,7 +522,7 @@ staging location.
 
 ### EGB-031 - Identify the GPD G1 clearly and warn before the Ally panel goes dark
 
-Status: Implemented locally; deployment and visual validation pending
+Status: Implemented and visually validated on ROG Ally X/GPD G1
 
 The validated UI described the connected device as `ASMedia 246x AMD (MESA25.3)`.
 That mixed the USB4 bridge, driver, and Mesa version while hiding the actual GPU.
@@ -531,6 +533,8 @@ The first native-handoff pass also appeared to produce black screens only becaus
 the Samsung TV was still on another input while the Ally panel had correctly been
 disabled. All external-switch entry points now show a native confirmation telling
 the operator to select the G1's HDMI input before the restart is accepted.
+The corrected model label, confirmation, external transition, and return to the
+Ally all passed the follow-up hardware test.
 
 ## Completed in the fork, pending hardware verification
 

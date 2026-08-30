@@ -11,7 +11,7 @@ import {
   PanelSectionRow,
   showModal,
 } from "@decky/ui";
-import { definePlugin, toaster, useQuickAccessVisible } from "@decky/api";
+import { definePlugin, useQuickAccessVisible } from "@decky/api";
 import { callBackend } from "./backend";
 
 // The backend also fails closed. Keep the dangerous controls out of the active
@@ -1468,16 +1468,6 @@ function App(props) {
       absorbUiResult(method, res);
       var accepted = !!(res && (res.accepted || (res.switch_result && res.switch_result.accepted)));
       if (accepted) {
-        var transition = res.transition || (res.switch_result && res.switch_result.transition) || {};
-        if (toaster && typeof toaster.toast === "function") {
-          toaster.toast({
-            title: "eGPUBridge",
-            body: transition.target === "internal" ? "Returning to the Ally display" : "Switching to the eGPU display",
-            subtext: "Game Mode is restarting. The plugin will reconnect automatically.",
-            duration: 5000,
-            showToast: true,
-          });
-        }
         return null;
       }
       return call(serverApi, "status", {});
@@ -1515,7 +1505,7 @@ function App(props) {
             "Before continuing, set the TV to the HDMI input connected to the GPD G1."
           ),
           e("p", { style: { margin: "0" } },
-            "The Ally screen will go dark while Game Mode restarts. After confirmation, the restart waits briefly so the Decky notice can appear."
+            "The Ally screen will go dark while Game Mode restarts. eGPUBridge will reconnect automatically when the new display session is ready."
           )
         )
       ),

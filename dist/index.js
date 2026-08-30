@@ -16,7 +16,6 @@ if (api._version != API_VERSION) {
     console.warn(`[@decky/api] Requested API version ${API_VERSION} but the running loader only supports version ${api._version}. Some features may not work.`);
 }
 const callable = api.callable;
-const toaster = api.toaster;
 const useQuickAccessVisible = api.useQuickAccessVisible;
 const definePlugin = (fn) => {
     return (...args) => {
@@ -713,16 +712,6 @@ function App(props) {
             absorbUiResult(method, res);
             var accepted = !!(res && (res.accepted || (res.switch_result && res.switch_result.accepted)));
             if (accepted) {
-                var transition = res.transition || (res.switch_result && res.switch_result.transition) || {};
-                if (toaster && typeof toaster.toast === "function") {
-                    toaster.toast({
-                        title: "eGPUBridge",
-                        body: transition.target === "internal" ? "Returning to the Ally display" : "Switching to the eGPU display",
-                        subtext: "Game Mode is restarting. The plugin will reconnect automatically.",
-                        duration: 5000,
-                        showToast: true,
-                    });
-                }
                 return null;
             }
             return call(serverApi, "status", {});
@@ -751,7 +740,7 @@ function App(props) {
                 closeConfirmation();
                 doCall(method, Object.assign({}, args || {}, { async_handoff: true }));
             },
-        }, e("div", { style: { fontSize: "14px", lineHeight: "20px" } }, e("p", { style: { margin: "0 0 10px" } }, "Before continuing, set the TV to the HDMI input connected to the GPD G1."), e("p", { style: { margin: "0" } }, "The Ally screen will go dark while Game Mode restarts. After confirmation, the restart waits briefly so the Decky notice can appear."))), window, { strTitle: "eGPUBridge", bNeverPopOut: true });
+        }, e("div", { style: { fontSize: "14px", lineHeight: "20px" } }, e("p", { style: { margin: "0 0 10px" } }, "Before continuing, set the TV to the HDMI input connected to the GPD G1."), e("p", { style: { margin: "0" } }, "The Ally screen will go dark while Game Mode restarts. eGPUBridge will reconnect automatically when the new display session is ready."))), window, { strTitle: "eGPUBridge", bNeverPopOut: true });
     }
     // GPU_TUNING_LOAD
     function loadGpuTuning(force) {

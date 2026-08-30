@@ -6,6 +6,7 @@ import {
   ButtonItem,
   ConfirmModal,
   DialogButton,
+  Field,
   Focusable,
   PanelSection,
   PanelSectionRow,
@@ -4089,10 +4090,14 @@ function App(props) {
           style: { fontSize: "12px", fontWeight: "900", color: "rgba(245,248,255,.94)", marginBottom: "6px", lineHeight: "14px", borderTop: "1px solid rgba(160,190,245,.12)", paddingTop: "8px" }
         }, "Diagnostics"),
 
-        // Collect Diagnostics button
-        e(Focusable, {
-          className: "egpuProfileRow",
-          onActivate: function() {
+        // EGB-018 stage 2 start: read-only diagnostics use native Decky rows.
+        e(ButtonItem, {
+          label: "Collect Device Info",
+          description: "Create a redacted hardware and log summary",
+          layout: "inline",
+          childrenContainerWidth: "min",
+          disabled: diagLoading,
+          onClick: function() {
             if (diagLoading) return;
             setDiagLoading(true);
             call(serverApi, "collect_diagnostics", {}).then(function(res) {
@@ -4104,16 +4109,14 @@ function App(props) {
               setLast({ ok: false, source: "diagnostics", error: String(err) });
             });
           }
-        },
-          e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } },
-            e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Collect Device Info"),
-            e("span", { style: { fontSize: "10px", fontWeight: "700", color: diagLoading ? "rgba(255,210,90,.90)" : "rgba(245,248,255,.50)" } }, diagLoading ? "Collecting..." : "Run")
-          )
-        ),
+        }, diagLoading ? "Collecting..." : "Run"),
+
         // Diagnostics summary
-        diagnostics ? e("div", {
-          className: "egb-label",
-          style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)", padding: "0 6px 6px", lineHeight: "16px" }
+        diagnostics ? e(Field, {
+          label: "Device summary",
+          childrenLayout: "below",
+          padding: "compact",
+          bottomSeparator: "none"
         },
           e("div", null, "CPU: " + (diagnostics.cpu || "?")),
           e("div", null, "RAM: " + (diagnostics.ram || "?")),
@@ -4123,27 +4126,22 @@ function App(props) {
           e("div", null, "Warnings in log: " + (diagnostics.log_warnings != null ? diagnostics.log_warnings : "?"))
         ) : null,
 
-        // TV Control Health button
-        e(Focusable, {
-          className: "egpuProfileRow",
-          onActivate: function() { doCall("tv_control_health", {}); call(serverApi, "tv_power_light", {}).then(function(res) { setTvPowerLight(res); }).catch(function() {}); }
-        },
-          e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } },
-            e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "TV Control Health"),
-            e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Check")
-          )
-        ),
+        e(ButtonItem, {
+          label: "TV Control Health",
+          description: "Read current ADB and TV power-light status",
+          layout: "inline",
+          childrenContainerWidth: "min",
+          onClick: function() { doCall("tv_control_health", {}); call(serverApi, "tv_power_light", {}).then(function(res) { setTvPowerLight(res); }).catch(function() {}); }
+        }, "Check"),
 
-        // Recent Events button
-        e(Focusable, {
-          className: "egpuProfileRow",
-          onActivate: function() { loadRecentEvents(); }
-        },
-          e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } },
-            e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Recent Events"),
-            e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Last 10 events")
-          )
-        ),
+        e(ButtonItem, {
+          label: "Recent Events",
+          description: "Load the last 10 redacted plugin events",
+          layout: "inline",
+          childrenContainerWidth: "min",
+          onClick: function() { loadRecentEvents(); }
+        }, "Load"),
+        // EGB-018 stage 2 end.
 
         // EGB-018 stage 1: native focus, activation, and theme behavior.
         e(ToggleField, {

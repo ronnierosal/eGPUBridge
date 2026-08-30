@@ -63,3 +63,51 @@ directory.
 Record the Ally OS/Decky versions, attached G1/TV state, controller-navigation
 result, display round-trip result (or why it was skipped), and snapshot directory
 before starting stage 2.
+
+## Stage 2 - read-only diagnostics
+
+Scope: replace the three hand-built diagnostic action rows with Decky's
+`ButtonItem` and show the collected device summary in a native `Field`. The
+existing `collect_diagnostics`, `tv_control_health`, `tv_power_light`, and recent
+event calls and their arguments are unchanged.
+
+### Deploy to the ROG Ally X
+
+Only deploy this stage after recording a passing stage 1 result. Run a fresh
+preflight and snapshot, then use the same transactional deploy path:
+
+```powershell
+./scripts/ally-remote-test.ps1 -Action Preflight -HostName <ally-host> -UserName deck -IdentityFile <ssh-key>
+./scripts/ally-remote-test.ps1 -Action Snapshot -HostName <ally-host> -UserName deck -IdentityFile <ssh-key>
+./scripts/ally-remote-test.ps1 -Action Deploy -HostName <ally-host> -UserName deck -IdentityFile <ssh-key> -ConfirmDeploy -InteractiveSudo
+```
+
+### Stage 2 gamepad test
+
+1. Open eGPUBridge, expand `Other`, and navigate to the Diagnostics group using
+   only the Ally controls. Confirm `Collect Device Info`, `TV Control Health`, and
+   `Recent Events` use Decky's normal row/button focus behavior without clipping.
+2. Activate `Collect Device Info` once. Confirm the action shows `Collecting...`
+   and cannot be activated a second time until it finishes.
+3. Confirm the native `Device summary` field appears with CPU, RAM, GPU count,
+   ADB state, and log error/warning counts. It must not expose hostname, username,
+   IP address, or MAC address.
+4. Activate `TV Control Health`. Confirm the same health result as the previous
+   build appears in `Last result`; this is a status check and must not switch the
+   TV input or power state.
+5. Activate `Recent Events`. Confirm the last 10 events appear in the existing
+   output section, remain readable at Quick Access width, and contain no network
+   or home-user identifiers.
+6. Toggle `Debug Info` on and off again to confirm stage 1 focus and visibility
+   behavior was not regressed.
+7. Repeat the read-only `Disconnect Check`, polling visibility check, and (when
+   the G1/TV test setup is available) the supervised external-to-internal round
+   trip from stage 1.
+8. Save and review an after-test snapshot:
+
+```powershell
+./scripts/ally-remote-test.ps1 -Action Snapshot -HostName <ally-host> -UserName deck -IdentityFile <ssh-key>
+```
+
+Record each diagnostic action result, focus/navigation result, display round-trip
+result (or why it was skipped), and the snapshot directory before stage 3.

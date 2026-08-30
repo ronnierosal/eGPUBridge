@@ -87,25 +87,35 @@ safe scope.
 
 ## Building from Source
 
-The plugin uses a pre-built frontend — no build step required.
+The frontend is built from TypeScript with the official Decky Rollup preset. Use
+Node.js 20+ and pnpm 9:
 
 ```bash
-# The dist/index.js IS the source (no TypeScript compilation)
-# Edit dist/index.js directly for UI changes
-# Edit main.py for backend changes
+corepack enable
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm build
+pnpm check:frontend-contract
 
-# Verify syntax
-node -c dist/index.js
-python3 -c "import ast; ast.parse(open('main.py').read())"
+# Verify backend and generated output
+node --check dist/index.js
+python3 -m py_compile main.py
 python3 -m unittest discover -s tests -v
 ```
+
+`src/index.tsx` and `src/backend.ts` are authoritative. Commit the generated
+`dist/index.js` and source map with frontend changes; CI rebuilds them and fails
+if the checked-in bundle has drifted. The large legacy UI remains temporarily
+`@ts-nocheck`, while the native Decky RPC registry and build configuration are
+type-checked normally.
 
 ## Architecture
 
 ```
 eGPUBridge/
-├── dist/index.js      # Frontend (React via Decky API)
-├── src/index.tsx       # Frontend source snapshot (currently differs from dist)
+├── dist/index.js       # Generated Decky frontend bundle
+├── src/index.tsx       # Authoritative frontend source
+├── src/backend.ts      # Typed @decky/api RPC registry
 ├── main.py             # Backend (Python, Decky Plugin class)
 ├── package.json        # Decky plugin metadata
 ├── plugin.json         # Decky plugin config
@@ -122,9 +132,10 @@ eGPUBridge/
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes (edit `dist/index.js` and/or `main.py`)
-4. Test on Steam Deck or compatible device
-5. Submit a Pull Request
+3. Make frontend changes under `src/` or backend changes in `main.py`
+4. Run the build, contract check, and regression tests
+5. Test on Steam Deck or compatible device
+6. Submit a Pull Request
 
 ## ROG Ally X + GPD G1 troubleshooting
 

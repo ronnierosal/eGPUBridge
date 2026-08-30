@@ -1,5 +1,8 @@
 import unittest
 import tempfile
+import inspect
+import json
+import re
 from pathlib import Path
 from unittest import mock
 
@@ -357,6 +360,27 @@ class InternalConnectorSafetyTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIsNone(result["connector_id"])
+
+
+class DeckyApiContractTests(unittest.TestCase):
+    def test_api_v1_instantiates_plugin_and_binds_native_rpc_arguments(self):
+        manifest = json.loads((Path(__file__).parents[1] / "plugin.json").read_text())
+        self.assertEqual(manifest["api_version"], 1)
+        self.assertIn("root", manifest["flags"])
+
+        plugin = main.Plugin()
+        registry = (Path(__file__).parents[1] / "src" / "backend.ts").read_text()
+        routes = re.findall(r"^  ([a-z][a-z0-9_]+): (noArgs|objectArg)\(", registry, re.MULTILINE)
+        self.assertEqual(len(routes), 34)
+        for route, adapter in routes:
+            method = getattr(plugin, route)
+            signature = inspect.signature(method)
+            if adapter == "noArgs":
+                signature.bind()
+            else:
+                signature.bind({})
+
+        inspect.signature(plugin.recent_events).bind(10)
 
 
 if __name__ == "__main__":

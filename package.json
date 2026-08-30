@@ -2,11 +2,39 @@
   "name": "egpubridge",
   "version": "0.3.1",
   "description": "Decky Loader plugin for eGPU status/switching on SteamOS",
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "echo dist/index.js is prebuilt",
-    "test": "python3 -m unittest discover -s tests -v"
+    "build": "rollup -c && node scripts/normalize-generated.mjs",
+    "build:check": "rollup -c && node scripts/normalize-generated.mjs && git diff --exit-code -- dist/index.js dist/index.js.map",
+    "check:frontend-contract": "node scripts/check-native-frontend.mjs",
+    "check:package": "node scripts/check-package-layout.mjs",
+    "smoke:bundle": "node scripts/smoke-native-bundle.mjs",
+    "watch": "rollup -c -w",
+    "test": "python3 -m unittest discover -s tests -v",
+    "typecheck": "tsc --noEmit"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "dependencies": {
+    "@decky/api": "^1.1.3",
+    "tslib": "^2.7.0"
+  },
+  "devDependencies": {
+    "@decky/rollup": "^1.0.2",
+    "@decky/ui": "^4.11.0",
+    "@rollup/rollup-linux-x64-musl": "^4.53.3",
+    "@types/react": "19.1.1",
+    "@types/react-dom": "19.1.1",
+    "@types/webpack": "^5.28.5",
+    "rollup": "^4.53.3",
+    "typescript": "^5.6.2"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "react",
+        "react-dom"
+      ]
+    }
+  },
+  "packageManager": "pnpm@9.15.9"
 }

@@ -15,6 +15,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Verify reproducible plugin build
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm build:check
+          pnpm check:frontend-contract
+          pnpm smoke:bundle
+          pnpm check:package
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -33,15 +53,22 @@ jobs:
           zip -r eGPUBridge-${{ github.ref_name }}.zip \
             dist/ \
             src/ \
+            scripts/ \
             main.py \
             package.json \
+            pnpm-lock.yaml \
             plugin.json \
+            rollup.config.js \
+            tsconfig.json \
             bin/ \
             LICENSE \
             README.md
+          sha256sum eGPUBridge-${{ github.ref_name }}.zip > eGPUBridge-${{ github.ref_name }}.zip.sha256
 
       - name: Upload zip to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: eGPUBridge-${{ github.ref_name }}.zip
+          files: |
+            eGPUBridge-${{ github.ref_name }}.zip
+            eGPUBridge-${{ github.ref_name }}.zip.sha256

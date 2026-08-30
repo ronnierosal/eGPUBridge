@@ -13,6 +13,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check native Decky frontend
+        run: pnpm typecheck
+
+      - name: Build native Decky frontend
+        run: pnpm build
+
+      - name: Verify generated frontend is committed
+        run: git diff --exit-code -- dist/index.js dist/index.js.map
+
+      - name: Check native Decky frontend contract
+        run: pnpm check:frontend-contract
+
+      - name: Smoke test native Decky bundle
+        run: pnpm smoke:bundle
+
+      - name: Check plugin package layout
+        run: pnpm check:package
+
       - name: Check Python syntax
         run: python3 -m py_compile main.py
 

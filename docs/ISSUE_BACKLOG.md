@@ -226,11 +226,11 @@ Relevant code: [`main.py`](../main.py#L4835)
 
 ### EGB-014 - Make the frontend reproducible
 
-Status: Open
+Status: Implemented in `codex/decky-native-foundation`; hardware validation pending
 
-`src/index.tsx` does not reproduce `dist/index.js`, and the repository has no
-source-to-dist verification. Establish a deterministic build and fail CI when
-generated output differs, or explicitly declare one canonical source.
+The repository previously had no source-to-dist verification. The native
+foundation makes `src/index.tsx` authoritative, generates `dist/index.js` through
+the official Decky Rollup preset, and makes CI fail when generated output drifts.
 
 ### EGB-015 - Replace the copied full Gamescope session script
 
@@ -246,7 +246,7 @@ Relevant code: [`bin/gamescope-session-egpubridge`](../bin/gamescope-session-egp
 
 ### EGB-016 - Expand deterministic tests
 
-Status: In progress - deterministic coverage expanded from 7 to 19 tests
+Status: In progress - deterministic coverage expanded from 7 to 20 tests
 
 Add tests for exact device selection, topology-safe disconnect, transition-state
 recovery, reload idempotency, connector detection failures, tuning bounds,
@@ -261,14 +261,15 @@ the source/version of bundled Android platform tools.
 
 ### EGB-018 - Modernize the frontend with Decky UI and Decky API
 
-Status: Deferred until the P0/P1 switching, recovery, and hardware-safety work is fixed and validated
+Status: Native build and API foundation implemented in `codex/decky-native-foundation`; visual migration remains deferred
 
 The frontend uses some Decky components, but it also contains hundreds of inline
 style declarations, multiple embedded `<style>` blocks, extensive `!important`
 overrides, custom focus behavior, and hand-built versions of standard controls.
-After the major correctness and safety issues are resolved, migrate the frontend
-to the current Decky plugin template and use components imported directly from
-`@decky/ui` plus RPC helpers from `@decky/api`.
+The foundation now uses the current Decky build template, direct `@decky/ui`
+imports, and RPC helpers from `@decky/api`. After the major correctness and
+safety issues are validated, migrate the remaining hand-built controls and
+styling incrementally.
 
 Recommended replacements include:
 
@@ -277,8 +278,8 @@ Recommended replacements include:
 - `Dropdown` for performance and GPU-profile selectors.
 - `SliderField` for tuning ranges.
 - `Field`, `PanelSection`, and `PanelSectionRow` for standard layout and status rows.
-- Typed `callable()` functions and `definePlugin()` from `@decky/api` instead of
-  runtime global discovery and direct legacy `callPluginMethod` wrappers.
+- Continue replacing the transitional generic UI call helper with direct typed
+  route helpers from the new RPC registry.
 
 Retain only small, isolated plugin-specific styling where Decky has no suitable
 element, such as GPU status indicators, compact hardware layouts, diagnostic
@@ -293,6 +294,18 @@ Acceptance criteria:
 - All existing actions and backend RPC behavior remain functionally equivalent.
 - Gamepad navigation and each control are validated on the ROG Ally X before the
   legacy compatibility and styling layers are removed.
+
+Foundation completed on the feature branch:
+
+- Official `@decky/rollup`, `@decky/ui`, and `@decky/api` dependencies with a
+  locked pnpm toolchain.
+- `src/index.tsx` is authoritative and reproducibly generates `dist/index.js`.
+- Native default plugin export replaces `window.eGPUBridgePlugin` registration.
+- A typed 35-route RPC registry replaces direct legacy `callPluginMethod` use.
+- `api_version: 1` positional-call compatibility is checked against the Python
+  plugin instance in deterministic tests.
+- CI type-checks, rebuilds, detects generated-output drift, and verifies the
+  frontend/backend route contract.
 
 Relevant code: [`src/index.tsx`](../src/index.tsx)
 
@@ -311,7 +324,7 @@ Relevant code: [`src/index.tsx`](../src/index.tsx)
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Nineteen deterministic tests and CI checks are passing locally.
+- Twenty deterministic tests and CI checks are passing locally.
 
 These changes still require a ROG Ally X plus GPD G1 hardware run before being
 considered verified.

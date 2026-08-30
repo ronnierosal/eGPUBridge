@@ -1,73 +1,23 @@
-// eGPUBridge v0.3.alfa - gamepad friendly frontend using Decky/Steam ButtonItem. WAGON_UI_SKELETON_90004 ROUTE_STATUS_WAGON_90101 GPU_PROFILES_WAGON_UI_90202R1 GPU_WAGON_STATE_9020302 GPU_POLISH_TVCHECK_9020303 AMD_CAPABILITY_UI_90302R1 GPU_POLICY_UI_90304 GPU_ACTIONS_UI_90402R1 GPU_PROFILE_UI_90501B UI_SHELL_GPU_BEFORE_RECOVERY_90602R2 UI_SHELL_RENAME_GPU_CENTER_9060302 UI_SHELL_REMOVED_HOTKEY_MINI_9060303 UI_SHELL_REPAIR_GPU_CENTER_BOUNDARIES_9060304R1 UI_SHELL_REMOVED_DUPLICATE_TV_CHECK_9060305 UI_GPU_HEADERS_90702
+// eGPUBridge v0.3.alfa - gamepad friendly frontend using Decky/Steam ButtonItem. WAGON_UI_SKELETON_90004 ROUTE_STATUS_WAGON_90101 GPU_PROFILES_WAGON_UI_90202R1 GPU_WAGON_STATE_9020302 GPU_POLISH_TVCHECK_9020303 AMD_CAPABILITY_UI_90302R1 GPU_POLICY_UI_90304 GPU_ACTIONS_UI_90402R1 GPU_PROFILE_UI_90501B UI_SHELL_GPU_BEFORE_RECOVERY_90602R2 UI_SHELL_RENAME_GPU_CENTER_9060302 UI_SHELL_REPAIR_GPU_CENTER_BOUNDARIES_9060304R1 UI_SHELL_REMOVED_DUPLICATE_TV_CHECK_9060305 UI_GPU_HEADERS_90702
+// @ts-nocheck
 
-const DFL = Object.assign(
-  {},
-  window.DeckyPluginLoader || {},
-  window.DFL || {},
-  window.deckyFrontendLib || {}
-);
-const React =
-  DFL.React ||
-  window.React ||
-  window.SP_REACT ||
-  window.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED?.React ||
-  globalThis.React;
+import * as React from "react";
+import {
+  ButtonItem,
+  DialogButton,
+  Focusable,
+  PanelSection,
+  PanelSectionRow,
+} from "@decky/ui";
+import { definePlugin } from "@decky/api";
+import { callBackend } from "./backend";
 
-const Components =
-  DFL.Components ||
-  DFL.components ||
-  window.DeckyPluginLoader?.Components ||
-  window.DeckyPluginLoader?.components ||
-  {};
+// The backend also fails closed. Keep the dangerous controls out of the active
+// UI until their hardware-specific safety checks are implemented and tested.
+const UNSAFE_HARDWARE_CONTROLS_ENABLED = false;
 
-const PanelSection =
-  Components.PanelSection ||
-  DFL.PanelSection ||
-  function(props) {
-    return React.createElement("div", { style: { marginBottom: "8px" } },
-      React.createElement("div", { style: { fontWeight: 800, margin: "8px 0" } }, props.title || ""),
-      props.children
-    );
-  };
-
-const PanelSectionRow =
-  Components.PanelSectionRow ||
-  DFL.PanelSectionRow ||
-  function(props) {
-    return React.createElement("div", { style: { margin: "6px 0" } }, props.children);
-  };
-
-const ButtonItem =
-  DFL.ButtonItem ||
-  Components.ButtonItem ||
-  Components.Button ||
-  DFL.Button;
-
-const DialogButton =
-  DFL.DialogButton ||
-  Components.DialogButton ||
-  null;
-
-const Focusable =
-  DFL.Focusable ||
-  Components.Focusable ||
-  null;
-
-function getServerApi(x) {
-  if (!x) return null;
-  if (x.serverAPI) return x.serverAPI;
-  if (x.serverApi) return x.serverApi;
-  return x;
-}
-
-function call(serverApi, method, args) {
-  args = args || {};
-  if (!serverApi || !serverApi.callPluginMethod) {
-    return Promise.resolve({ ok: false, error: "serverApi.callPluginMethod unavailable" });
-  }
-  return serverApi.callPluginMethod(method, args).then(function(res) {
-    return res && res.result !== undefined ? res.result : res;
-  });
+function call(_serverApi, method, args) {
+  return callBackend(method, args || {});
 }
 
 function e(tag, props) {
@@ -1281,7 +1231,9 @@ function ToggleRow(props) {
 
 
 function App(props) {
-  var serverApi = getServerApi(props.serverApi || props.serverAPI || props);
+  // Kept as a placeholder until the remaining legacy call sites are converted
+  // to direct typed helpers; transport is handled by @decky/api in backend.ts.
+  var serverApi = null;
   var statusState = React.useState(null);
   var status = statusState[0];
   var setStatus = statusState[1];
@@ -1553,6 +1505,10 @@ function App(props) {
     }
 
     function gpuSetFanControl(mode, pwm) {
+      if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) {
+        setLast({ ok: false, disabled: true, error: "Manual fan control is disabled in this safety build." });
+        return Promise.resolve({ ok: false, disabled: true });
+      }
       setBusy(true);
       call(serverApi, "gpu_set_fan_control", { mode: mode, pwm: pwm }).then(function(res) {
         setLast(res);
@@ -1609,6 +1565,10 @@ function App(props) {
     }
 
     function gpuSetOdClocks(commit) {
+      if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) {
+        setLast({ ok: false, disabled: true, error: "Clock and voltage controls are disabled in this safety build." });
+        return Promise.resolve({ ok: false, disabled: true });
+      }
       setBusy(true);
       var params = { commit: !!commit };
       if (odSclk !== null) params.sclk_mhz = odSclk;
@@ -2209,7 +2169,7 @@ function App(props) {
       /* Focus ring (shared) */
       ".egb-btn-primary:focus,.egb-btn-primary:focus-visible,.egb-btn-primary.gpfocus,.egb-btn-small:focus,.egb-btn-small:focus-visible,.egb-btn-small.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;background:linear-gradient(180deg,rgba(238,240,246,.98),rgba(210,214,226,.98))!important;color:rgba(35,38,45,.98)!important;}.egb-btn-icon:focus,.egb-btn-icon:focus-visible,.egb-btn-icon.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.7)!important;border-radius:999px!important;}"),
 
-      e("style", null, "/* UI_SKETCH_ACCORDION_DASHBOARD_91007R4 */\n/* UI_DASHBOARD_POLISH_91007R4B */\n.egbSketchRoot91007R4{width:100%!important;box-sizing:border-box!important;}\n.egbMainCollapsed91007R4{width:100%!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;gap:6px!important;padding:12px!important;border-radius:12px!important;background:rgba(18,22,32,.88)!important;border:1px solid rgba(100,160,240,.18)!important;}\n.egbMainHeader91007R4{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;margin-bottom:4px!important;}\n.egbMainActionGrid91007R4{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;width:100%!important;}\n.egbMainActionButton91007R4{min-width:0!important;overflow:hidden!important;}\n.egbMainActionButton91007R4 button{width:100%!important;min-width:0!important;height:56px!important;min-height:56px!important;box-sizing:border-box!important;border-radius:10px!important;overflow:hidden!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:11px!important;font-weight:900!important;white-space:nowrap!important;}\n.egbMainActionButton91007R4 button *{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}\n.egbDashboard91007R4{width:100%!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;gap:4px!important;}\n.egbDashRow91007R4{display:flex!important;align-items:center!important;gap:10px!important;padding:10px 12px!important;border-radius:10px!important;background:rgba(255,255,255,.035)!important;border:1px solid rgba(255,255,255,.08)!important;height:52px!important;box-sizing:border-box!important;}\n.egbDashIcon91007R4{flex:0 0 auto!important;width:24px!important;height:24px!important;display:flex!important;align-items:center!important;justify-content:center!important;}\n.egbDashText91007R4{flex:1 1 auto!important;min-width:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;}\n.egbDashTitle91007R4{font-size:11px!important;font-weight:900!important;color:#EEEAFE!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;line-height:13px!important;}\n.egbDashValue91007R4{font-size:10px!important;font-weight:700!important;color:#9AA4B2!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;line-height:12px!important;margin-top:1px!important;}\n.egbDashGearBtn91007R4{flex:0 0 auto!important;width:36px!important;height:36px!important;min-width:36px!important;min-height:36px!important;padding:0!important;border-radius:8px!important;display:flex!important;align-items:center!important;justify-content:center!important;background:rgba(255,255,255,.06)!important;border:1px solid rgba(255,255,255,.12)!important;cursor:pointer!important;}\n.egbDashGearBtn91007R4:focus,.egbDashGearBtn91007R4:focus-visible{outline:2px solid rgba(255,255,255,.5)!important;outline-offset:-2px!important;}\n.egbAccordion91007R4{width:100%!important;box-sizing:border-box!important;margin-top:8px!important;border-radius:12px!important;background:rgba(18,22,32,.88)!important;border:1px solid rgba(255,255,255,.08)!important;overflow:hidden!important;}\n.egbAccordionHeader91007R4{display:flex!important;align-items:center!important;justify-content:space-between!important;padding:10px 12px!important;cursor:pointer!important;}\n.egbAccordionBody91007R4{padding:0 12px 12px 12px!important;}\n.egbTvControlCompact91007R4{width:100%!important;box-sizing:border-box!important;}\n.egbGpuCenterCompact91007R4{width:100%!important;box-sizing:border-box!important;}\n.egbDashChevron91007R4{flex:0 0 auto!important;width:16px!important;height:16px!important;display:flex!important;align-items:center!important;justify-content:center!important;color:rgba(255,255,255,.3)!important;font-size:14px!important;}\n/* UI_UNIFORM_BTN_STYLE */\n.egbRecoveryAction91006R14I2 button,.egbRecoveryAction91006R14I2 [role=button]{height:40px!important;min-height:40px!important;max-height:40px!important;border-radius:10px!important;background:linear-gradient(180deg,rgba(54,61,73,.96),rgba(31,36,45,.98))!important;border:1px solid rgba(255,255,255,.13)!important;box-shadow:0 0 0 1px rgba(255,255,255,.035),0 8px 16px rgba(0,0,0,.22)!important;color:rgba(245,248,255,.96)!important;}\n.egbRecoveryAction91006R14I2 button:focus,.egbRecoveryAction91006R14I2 button:focus-visible,.egbRecoveryAction91006R14I2 button.gpfocus,.egbRecoveryAction91006R14I2 [role=button]:focus,.egbRecoveryAction91006R14I2 [role=button]:focus-visible,.egbRecoveryAction91006R14I2 [role=button].gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;background:linear-gradient(180deg,rgba(238,240,246,.98),rgba(210,214,226,.98))!important;color:rgba(35,38,45,.98)!important;}\n.egbRecoveryCompact91006R14G button,.egbRecoveryCompact91006R14G [role=button]{height:40px!important;min-height:40px!important;max-height:40px!important;border-radius:10px!important;background:linear-gradient(180deg,rgba(54,61,73,.96),rgba(31,36,45,.98))!important;border:1px solid rgba(255,255,255,.13)!important;box-shadow:0 0 0 1px rgba(255,255,255,.035),0 8px 16px rgba(0,0,0,.22)!important;}\n.egbRecoveryCompact91006R14G button:focus,.egbRecoveryCompact91006R14G button:focus-visible,.egbRecoveryCompact91006R14G button.gpfocus,.egbRecoveryCompact91006R14G [role=button]:focus,.egbRecoveryCompact91006R14G [role=button].gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;background:linear-gradient(180deg,rgba(238,240,246,.98),rgba(210,214,226,.98))!important;color:rgba(35,38,45,.98)!important;}\n.egbTvMiniCell91006R13B button,.egbTvMiniCell91006R13B [role=button]{height:40px!important;min-height:40px!important;border-radius:10px!important;background:linear-gradient(180deg,rgba(54,61,73,.96),rgba(31,36,45,.98))!important;border:1px solid rgba(255,255,255,.13)!important;box-shadow:0 0 0 1px rgba(255,255,255,.035),0 8px 16px rgba(0,0,0,.22)!important;}\n.egbTvMiniCell91006R13B button:focus,.egbTvMiniCell91006R13B button:focus-visible,.egbTvMiniCell91006R13B button.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;background:linear-gradient(180deg,rgba(238,240,246,.98),rgba(210,214,226,.98))!important;color:rgba(35,38,45,.98)!important;}\n/* UI_FOCUS_RING */\n.egb-std-btn-wrap button:focus,.egb-std-btn-wrap button:focus-visible,.egb-std-btn-wrap button.gpfocus,.egb-std-btn-wrap.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egb-tv-ctrl-btn-wrap button:focus,.egb-tv-ctrl-btn-wrap button:focus-visible,.egb-tv-ctrl-btn-wrap button.gpfocus,.egb-tv-ctrl-btn-wrap.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egb-tv-btn-wrap button:focus,.egb-tv-btn-wrap button:focus-visible,.egb-tv-btn-wrap button.gpfocus,.egb-tv-btn-wrap.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egb-tv-status-wrap button:focus,.egb-tv-status-wrap button:focus-visible,.egb-tv-status-wrap button.gpfocus,.egb-tv-status-wrap.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egbDashDotBtn91008R1:focus,.egbDashDotBtn91008R1:focus-visible,.egbDashDotBtn91008R1.gpfocus,.egbDashDotBtn91008R1 button:focus,.egbDashDotBtn91008R1 button.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.7)!important;border-radius:999px!important;}\n.egbSmartSwitchBtn button,.egbSmartSwitchBtn [role=button]{width:100%!important;height:52px!important;min-height:52px!important;max-height:52px!important;box-sizing:border-box!important;border-radius:12px!important;border:2px solid #FACC15!important;background:linear-gradient(180deg, rgba(30,32,40,.98), rgba(20,22,28,.98))!important;box-shadow:0 0 12px rgba(250,204,21,.15), 0 0 0 1px rgba(250,204,21,.08), 0 8px 16px rgba(0,0,0,.3)!important;color:#FACC15!important;padding:8px 12px!important;display:flex!important;align-items:center!important;justify-content:center!important;}\n.egbSmartSwitchBtn button:focus,.egbSmartSwitchBtn button:focus-visible,.egbSmartSwitchBtn button.gpfocus,.egbSmartSwitchBtn.gpfocus button,.egbSmartSwitchBtn [role=button]:focus,.egbSmartSwitchBtn [role=button]:focus-visible,.egbSmartSwitchBtn [role=button].gpfocus{outline:none!important;outline-offset:0!important;border:2px solid #F59E0B!important;background:linear-gradient(180deg, #FACC15, #F59E0B)!important;box-shadow:0 0 14px rgba(245,158,11,.35), 0 8px 16px rgba(0,0,0,.25)!important;border-radius:12px!important;height:52px!important;min-height:52px!important;max-height:52px!important;}\n.egbSmartSwitchBtn button:focus *,.egbSmartSwitchBtn button:focus-visible *,.egbSmartSwitchBtn button.gpfocus *,.egbSmartSwitchBtn.gpfocus button *{color:#1A1A1A!important;fill:#1A1A1A!important;}\n.PanelSectionRow button:focus,.PanelSectionRow button:focus-visible,.PanelSectionRow button.gpfocus,.PanelSectionRow.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egpuCenterBtn:focus,.egpuCenterBtn:focus-visible,.egpuCenterBtn.gpfocus,.egpuCenterBtn button:focus,.egpuCenterBtn button.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egpuProfileRow.gpfocus,.egpuProfileRow:focus-visible{background:rgba(255,255,255,.06)!important;border-radius:8px!important;outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egpuProfileRow.gpfocus span,.egpuProfileRow:focus-visible span{color:rgba(245,248,255,.95)!important;}\n.egpuProfileBtn90501.gpfocus,.egpuProfileBtn90501:focus-visible{background:rgba(192,38,211,.25)!important;border-color:rgba(192,38,211,.5)!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;border-radius:6px!important;outline:none!important;}.egpuProfileBtn90501.egb-btn-round.gpfocus,.egpuProfileBtn90501.egb-btn-round:focus-visible{border-radius:999px!important;}.egb-refresh-btn.gpfocus,.egb-refresh-btn:focus-visible{background:rgba(255,255,255,.15)!important;border-color:rgba(255,255,255,.3)!important;box-shadow:0 0 0 2px rgba(255,255,255,.7)!important;outline:none!important;}.egb-refresh-btn.egb-btn-round.gpfocus,.egb-refresh-btn.egb-btn-round:focus-visible{border-radius:999px!important;}\n.egpuTuningSlider.gpfocus{background:rgba(255,255,255,.06)!important;border-radius:8px!important;outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egpuTuningSlider.gpfocus span{color:rgba(245,248,255,.95)!important;}\n.egpuIconBtn:focus,.egpuIconBtn:focus-visible,.egpuIconBtn.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;background:linear-gradient(180deg,rgba(238,240,246,.98),rgba(210,214,226,.98))!important;color:rgba(35,38,45,.98)!important;}\ndiv[class*=Focusable].gpfocus{outline:none!important;}.egb-tv-btn-wrap.gpfocus{box-shadow:none!important;}"),
+      e("style", null, "/* UI_SKETCH_ACCORDION_DASHBOARD_91007R4 */\n/* UI_DASHBOARD_POLISH_91007R4B */\n.egbSketchRoot91007R4{width:100%!important;box-sizing:border-box!important;}\n.egbMainCollapsed91007R4{width:100%!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;gap:6px!important;padding:12px!important;border-radius:12px!important;background:rgba(18,22,32,.88)!important;border:1px solid rgba(100,160,240,.18)!important;}\n.egbMainHeader91007R4{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;margin-bottom:4px!important;}\n.egbMainActionGrid91007R4{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;width:100%!important;}\n.egbMainActionButton91007R4{min-width:0!important;overflow:hidden!important;}\n.egbMainActionButton91007R4 button{width:100%!important;min-width:0!important;height:56px!important;min-height:56px!important;box-sizing:border-box!important;border-radius:10px!important;overflow:hidden!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:11px!important;font-weight:900!important;white-space:nowrap!important;}\n.egbMainActionButton91007R4 button *{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}\n.egbDashboard91007R4{width:100%!important;box-sizing:border-box!important;display:flex!important;flex-direction:column!important;gap:4px!important;}\n.egbDashRow91007R4{display:flex!important;align-items:center!important;gap:10px!important;padding:10px 12px!important;border-radius:10px!important;background:rgba(255,255,255,.035)!important;border:1px solid rgba(255,255,255,.08)!important;height:52px!important;box-sizing:border-box!important;}\n.egbDashIcon91007R4{flex:0 0 auto!important;width:24px!important;height:24px!important;display:flex!important;align-items:center!important;justify-content:center!important;}\n.egbDashText91007R4{flex:1 1 auto!important;min-width:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;}\n.egbDashTitle91007R4{font-size:11px!important;font-weight:900!important;color:#EEEAFE!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;line-height:13px!important;}\n.egbDashValue91007R4{font-size:10px!important;font-weight:700!important;color:#9AA4B2!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;line-height:12px!important;margin-top:1px!important;}\n.egbDashGearBtn91007R4{flex:0 0 auto!important;width:36px!important;height:36px!important;min-width:36px!important;min-height:36px!important;padding:0!important;border-radius:8px!important;display:flex!important;align-items:center!important;justify-content:center!important;background:rgba(255,255,255,.06)!important;border:1px solid rgba(255,255,255,.12)!important;cursor:pointer!important;}\n.egbDashGearBtn91007R4:focus,.egbDashGearBtn91007R4:focus-visible,.egbDashGearBtn91007R4.gpfocus{outline:2px solid rgba(255,255,255,.5)!important;outline-offset:-2px!important;}\n.egbAccordion91007R4{width:100%!important;box-sizing:border-box!important;margin-top:8px!important;border-radius:12px!important;background:rgba(18,22,32,.88)!important;border:1px solid rgba(255,255,255,.08)!important;overflow:hidden!important;}\n.egbAccordionHeader91007R4{display:flex!important;align-items:center!important;justify-content:space-between!important;padding:10px 12px!important;cursor:pointer!important;}\n.egbAccordionBody91007R4{padding:0 12px 12px 12px!important;}\n.egbTvControlCompact91007R4{width:100%!important;box-sizing:border-box!important;}\n.egbGpuCenterCompact91007R4{width:100%!important;box-sizing:border-box!important;}\n.egbDashChevron91007R4{flex:0 0 auto!important;width:16px!important;height:16px!important;display:flex!important;align-items:center!important;justify-content:center!important;color:rgba(255,255,255,.3)!important;font-size:14px!important;}\n/* UI_UNIFORM_BTN_STYLE */\n.egbRecoveryAction91006R14I2 button,.egbRecoveryAction91006R14I2 [role=button]{height:40px!important;min-height:40px!important;max-height:40px!important;border-radius:10px!important;background:linear-gradient(180deg,rgba(54,61,73,.96),rgba(31,36,45,.98))!important;border:1px solid rgba(255,255,255,.13)!important;box-shadow:0 0 0 1px rgba(255,255,255,.035),0 8px 16px rgba(0,0,0,.22)!important;color:rgba(245,248,255,.96)!important;}\n.egbRecoveryAction91006R14I2 button:focus,.egbRecoveryAction91006R14I2 button:focus-visible,.egbRecoveryAction91006R14I2 button.gpfocus,.egbRecoveryAction91006R14I2 [role=button]:focus,.egbRecoveryAction91006R14I2 [role=button]:focus-visible,.egbRecoveryAction91006R14I2 [role=button].gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;background:linear-gradient(180deg,rgba(238,240,246,.98),rgba(210,214,226,.98))!important;color:rgba(35,38,45,.98)!important;}\n.egbRecoveryCompact91006R14G button,.egbRecoveryCompact91006R14G [role=button]{height:40px!important;min-height:40px!important;max-height:40px!important;border-radius:10px!important;background:linear-gradient(180deg,rgba(54,61,73,.96),rgba(31,36,45,.98))!important;border:1px solid rgba(255,255,255,.13)!important;box-shadow:0 0 0 1px rgba(255,255,255,.035),0 8px 16px rgba(0,0,0,.22)!important;}\n.egbRecoveryCompact91006R14G button:focus,.egbRecoveryCompact91006R14G button:focus-visible,.egbRecoveryCompact91006R14G button.gpfocus,.egbRecoveryCompact91006R14G [role=button]:focus,.egbRecoveryCompact91006R14G [role=button].gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;background:linear-gradient(180deg,rgba(238,240,246,.98),rgba(210,214,226,.98))!important;color:rgba(35,38,45,.98)!important;}\n.egbTvMiniCell91006R13B button,.egbTvMiniCell91006R13B [role=button]{height:40px!important;min-height:40px!important;border-radius:10px!important;background:linear-gradient(180deg,rgba(54,61,73,.96),rgba(31,36,45,.98))!important;border:1px solid rgba(255,255,255,.13)!important;box-shadow:0 0 0 1px rgba(255,255,255,.035),0 8px 16px rgba(0,0,0,.22)!important;}\n.egbTvMiniCell91006R13B button:focus,.egbTvMiniCell91006R13B button:focus-visible,.egbTvMiniCell91006R13B button.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;background:linear-gradient(180deg,rgba(238,240,246,.98),rgba(210,214,226,.98))!important;color:rgba(35,38,45,.98)!important;}\n/* UI_FOCUS_RING */\n.egb-std-btn-wrap button:focus,.egb-std-btn-wrap button:focus-visible,.egb-std-btn-wrap button.gpfocus,.egb-std-btn-wrap.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egb-tv-ctrl-btn-wrap button:focus,.egb-tv-ctrl-btn-wrap button:focus-visible,.egb-tv-ctrl-btn-wrap button.gpfocus,.egb-tv-ctrl-btn-wrap.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egb-tv-btn-wrap button:focus,.egb-tv-btn-wrap button:focus-visible,.egb-tv-btn-wrap button.gpfocus,.egb-tv-btn-wrap.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egb-tv-status-wrap button:focus,.egb-tv-status-wrap button:focus-visible,.egb-tv-status-wrap button.gpfocus,.egb-tv-status-wrap.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egbDashDotBtn91008R1:focus,.egbDashDotBtn91008R1:focus-visible,.egbDashDotBtn91008R1.gpfocus,.egbDashDotBtn91008R1 button:focus,.egbDashDotBtn91008R1 button.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.7)!important;border-radius:999px!important;}\n.egbSmartSwitchBtn button,.egbSmartSwitchBtn [role=button]{width:100%!important;height:52px!important;min-height:52px!important;max-height:52px!important;box-sizing:border-box!important;border-radius:12px!important;border:2px solid #FACC15!important;background:linear-gradient(180deg, rgba(30,32,40,.98), rgba(20,22,28,.98))!important;box-shadow:0 0 12px rgba(250,204,21,.15), 0 0 0 1px rgba(250,204,21,.08), 0 8px 16px rgba(0,0,0,.3)!important;color:#FACC15!important;padding:8px 12px!important;display:flex!important;align-items:center!important;justify-content:center!important;}\n.egbSmartSwitchBtn button:focus,.egbSmartSwitchBtn button:focus-visible,.egbSmartSwitchBtn button.gpfocus,.egbSmartSwitchBtn.gpfocus button,.egbSmartSwitchBtn [role=button]:focus,.egbSmartSwitchBtn [role=button]:focus-visible,.egbSmartSwitchBtn [role=button].gpfocus{outline:none!important;outline-offset:0!important;border:2px solid #F59E0B!important;background:linear-gradient(180deg, #FACC15, #F59E0B)!important;box-shadow:0 0 14px rgba(245,158,11,.35), 0 8px 16px rgba(0,0,0,.25)!important;border-radius:12px!important;height:52px!important;min-height:52px!important;max-height:52px!important;}\n.egbSmartSwitchBtn button:focus *,.egbSmartSwitchBtn button:focus-visible *,.egbSmartSwitchBtn button.gpfocus *,.egbSmartSwitchBtn.gpfocus button *{color:#1A1A1A!important;fill:#1A1A1A!important;}\n.PanelSectionRow button:focus,.PanelSectionRow button:focus-visible,.PanelSectionRow button.gpfocus,.PanelSectionRow.gpfocus button{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egpuCenterBtn:focus,.egpuCenterBtn:focus-visible,.egpuCenterBtn.gpfocus,.egpuCenterBtn button:focus,.egpuCenterBtn button.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egpuProfileRow.gpfocus,.egpuProfileRow:focus-visible{background:rgba(255,255,255,.06)!important;border-radius:8px!important;outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egpuProfileRow.gpfocus span,.egpuProfileRow:focus-visible span{color:rgba(245,248,255,.95)!important;}\n.egpuProfileBtn90501.gpfocus,.egpuProfileBtn90501:focus-visible{background:rgba(192,38,211,.25)!important;border-color:rgba(192,38,211,.5)!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;border-radius:6px!important;outline:none!important;}.egpuProfileBtn90501.egb-btn-round.gpfocus,.egpuProfileBtn90501.egb-btn-round:focus-visible{border-radius:999px!important;}.egb-refresh-btn.gpfocus,.egb-refresh-btn:focus-visible{background:rgba(255,255,255,.15)!important;border-color:rgba(255,255,255,.3)!important;box-shadow:0 0 0 2px rgba(255,255,255,.7)!important;outline:none!important;}.egb-refresh-btn.egb-btn-round.gpfocus,.egb-refresh-btn.egb-btn-round:focus-visible{border-radius:999px!important;}\n.egpuTuningSlider:focus,.egpuTuningSlider:focus-visible,.egpuTuningSlider.gpfocus{background:rgba(255,255,255,.06)!important;border-radius:8px!important;outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;}\n.egpuTuningSlider.gpfocus span{color:rgba(245,248,255,.95)!important;}\n.egpuIconBtn:focus,.egpuIconBtn:focus-visible,.egpuIconBtn.gpfocus{outline:none!important;box-shadow:0 0 0 2px rgba(255,255,255,.9)!important;background:linear-gradient(180deg,rgba(238,240,246,.98),rgba(210,214,226,.98))!important;color:rgba(35,38,45,.98)!important;}\ndiv[class*=Focusable].gpfocus{outline:none!important;}.egb-tv-btn-wrap.gpfocus{box-shadow:none!important;}"),
 
 
 
@@ -2971,9 +2931,6 @@ function App(props) {
                 width: "100%",
                 boxSizing: "border-box",
                 padding: "10px",
-                borderRadius: "12px",
-                background: "rgba(0,0,0,.12)",
-                border: "1px solid rgba(160,190,245,.20)",
                 overflow: "hidden"
               }
             },
@@ -3127,6 +3084,9 @@ function App(props) {
                     { id: "low", label: "LOW", desc: "Force minimum clocks, power saving" },
                     { id: "manual", label: "MANUAL", desc: "Manual control via sysfs" }
                   ];
+                  if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) {
+                    perfLevels = perfLevels.filter(function(level) { return level.id !== "manual"; });
+                  }
                   var perfColors = { auto: "rgba(220,130,255,.95)", high: "rgba(255,80,80,.90)", low: "rgba(80,255,150,.90)", manual: "rgba(255,180,60,.90)" };
                   var current = perfLevels.find(function(l) { return l.id === gpuTuning.perf_level; }) || perfLevels[0];
                   return e("div", { style: { marginBottom: "10px" } },
@@ -3208,7 +3168,7 @@ function App(props) {
                       )
                     ) : null,
                     // Manual Clocks (inside Performance Level card)
-                    gpuTuning.perf_level === "manual" ? (function() {
+                    UNSAFE_HARDWARE_CONTROLS_ENABLED && gpuTuning.perf_level === "manual" ? (function() {
                       var sclkMax = odClocks && odClocks.sclk_max ? odClocks.sclk_max : 3000;
                       var mclkMax = odClocks && odClocks.mclk_max ? odClocks.mclk_max : 2500;
                       var vddgfxMax = odClocks && odClocks.vddgfx_max ? odClocks.vddgfx_max : 1200;
@@ -3296,6 +3256,9 @@ function App(props) {
                     var ib = profileOrder.indexOf(b.name); if (ib < 0) ib = 99;
                     return ia - ib;
                   });
+                  if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) {
+                    sortedProfiles = sortedProfiles.filter(function(profile) { return profile.name !== "CUSTOM"; });
+                  }
                   var activeP = gpuTuning.profiles.find(function(p) { return p.name === gpuTuning.active_profile; }) || gpuTuning.profiles[0];
                   var activeDesc = profileDescs[activeP.name] || "";
                   var activeColor = profileColors[activeP.name] || "rgba(180,205,245,.60)";
@@ -3393,7 +3356,7 @@ function App(props) {
                       )
                     ) : null,
                     // Custom Profile Tuning (inside Power Profile card)
-                    (gpuTuning.active_profile === "CUSTOM" || customActivated) && !showCustomWarning ? (function() {
+                    UNSAFE_HARDWARE_CONTROLS_ENABLED && (gpuTuning.active_profile === "CUSTOM" || customActivated) && !showCustomWarning ? (function() {
                       var sclkMax = odClocks && odClocks.sclk_max ? odClocks.sclk_max : 3000;
                       var mclkMax = odClocks && odClocks.mclk_max ? odClocks.mclk_max : 2500;
                       var vddgfxMax = odClocks && odClocks.vddgfx_max ? odClocks.vddgfx_max : 1200;
@@ -3460,6 +3423,7 @@ function App(props) {
 
               // === Section 1.5: NVIDIA Driver Management ===
               (function() {
+                if (!UNSAFE_HARDWARE_CONTROLS_ENABLED) return null;
                 var vendor = status && status.active_vendor ? status.active_vendor : "auto";
                 var nvidiaInstalled = status && status.nvidia_driver_installed;
                 var nvidiaSmi = status && status.nvidia_smi;
@@ -3606,9 +3570,6 @@ function App(props) {
               marginTop: "6px",
               marginBottom: "10px",
               padding: "10px",
-              borderRadius: "14px",
-              background: "rgba(0,0,0,.12)",
-              border: "1px solid rgba(100,155,255,.40)",
               overflow: "hidden"
             }
           },
@@ -3820,9 +3781,6 @@ function App(props) {
                 width: "100%",
                 boxSizing: "border-box",
                 padding: "10px",
-                borderRadius: "12px",
-                background: "rgba(0,0,0,.12)",
-                border: "1px solid rgba(160,190,245,.20)",
                 overflow: "hidden"
               }
             },
@@ -3863,11 +3821,13 @@ function App(props) {
         // Safe Unplug button
         e(Focusable, {
           className: "egpuProfileRow",
-          onActivate: function() { doCall("prepare_for_unplug", {}); }
+          onActivate: function() {
+            setLast({ ok: false, disabled: true, error: "Safe Unplug is disabled until USB4 storage and topology checks are implemented." });
+          }
         },
           e("div", { style: { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", padding: "4px 6px", borderRadius: "8px" } },
             e("span", { className: "egb-label", style: { fontSize: "10px", fontWeight: "700", color: "rgba(180,205,245,.70)" } }, "Safe Unplug"),
-            e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(245,248,255,.50)" } }, "Eject eGPU")
+            e("span", { style: { fontSize: "10px", fontWeight: "700", color: "rgba(255,210,90,.70)" } }, "Disabled for safety")
           )
         ),
 
@@ -4022,8 +3982,9 @@ if (!React || !React.createElement) {
   throw new Error("React not found");
 }
 
-function definePlugin(serverApi) {
+function createPlugin() {
   return {
+    name: "eGPUBridge",
     titleView: React.createElement(
       Focusable,
       {
@@ -4071,6 +4032,7 @@ function definePlugin(serverApi) {
         DialogButton,
         {
           onOKActionDescription: "Safe Disconnect eGPU",
+          disabled: !UNSAFE_HARDWARE_CONTROLS_ENABLED,
           style: {
             height: "28px",
             width: "40px",
@@ -4082,7 +4044,7 @@ function definePlugin(serverApi) {
             alignItems: "center"
           },
           onClick: function() {
-            doCall("safe_disconnect", {});
+            if (UNSAFE_HARDWARE_CONTROLS_ENABLED) doCall("safe_disconnect", {});
           }
         },
         e("svg", {
@@ -4097,7 +4059,7 @@ function definePlugin(serverApi) {
         )
       )
     ),
-    content: React.createElement(App, { serverApi: serverApi }),
+    content: React.createElement(App, {}),
     icon: React.createElement(
       "svg",
       {
@@ -4271,6 +4233,6 @@ function definePlugin(serverApi) {
   };
 }
 
-window.eGPUBridgePlugin = definePlugin;
+export default definePlugin(createPlugin);
 
 // HOTKEY_UI_BUTTONS_81109

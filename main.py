@@ -45,9 +45,9 @@ GAMESCOPE_TARGET = "gamescope-session.target"
 # These controls remain callable by older frontends, so the backend must fail
 # closed as well as hiding them in the current UI.
 UNSAFE_HARDWARE_CONTROLS_ENABLED = False
-# The complete release path is implemented but remains off until the read-only
-# report is hardware-validated on the Ally X/GPD G1 after deployment.
-LIVE_UNPLUG_RELEASE_ENABLED = False
+# Enabled only behind the exact Ally X/GPD G1 topology, zero-blocker readiness
+# report, one-time token, and immediate full recheck implemented below.
+LIVE_UNPLUG_RELEASE_ENABLED = True
 
 ENV_OVERRIDE = Path("/home/deck/.config/environment.d/99-egpubridge.conf")
 

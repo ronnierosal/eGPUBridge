@@ -729,13 +729,18 @@ class SafetyGateTests(unittest.IsolatedAsyncioTestCase):
         fan = await main.gpu_set_fan_control(mode="manual", pwm=0)
         clocks = await main.gpu_set_od_clocks(sclk_mhz=9999, commit=True)
         disconnect = await main.Plugin.safe_disconnect()
-        live_unplug = await main.Plugin.safe_live_unplug({"token": "not-valid"})
         install = await main.nvidia_install_driver()
 
-        for result in (fan, clocks, disconnect, live_unplug, install):
+        for result in (fan, clocks, disconnect, install):
             self.assertFalse(result["ok"])
             self.assertTrue(result["disabled"])
             self.assertEqual(result["error_code"], "feature_disabled_for_safety")
+
+    async def test_live_unplug_requires_a_fresh_readiness_token(self):
+        result = await main.Plugin.safe_live_unplug({"token": "not-valid"})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_code"], "readiness_token_invalid")
 
     async def test_frontend_replaces_dead_disconnect_control_with_readiness_report(self):
         frontend = (Path(__file__).parents[1] / "src" / "index.tsx").read_text(encoding="utf-8")

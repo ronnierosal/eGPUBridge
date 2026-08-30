@@ -130,9 +130,13 @@ but no PCM playback node was open. SteamOS exposes card and render device nodes
 for the G1 while the optional DRM control node is absent from `/dev/dri`, which is
 now handled without weakening the required card/render identity checks.
 
-The release mutation remains disabled until the deployed read-only report proves
-the same topology and zero blockers from Decky's root backend. No live PCI removal
-was performed during this inspection.
+The deployed Decky-root report then proved the same topology with zero blockers:
+the Ally display was active, no Steam games or DRM clients were present, no PCM
+audio stream was open, no block devices were below the G1, and the only sound
+client was WirePlumber monitoring `controlC2`. The token-free report also matched
+the exact `Tapex Creek` identity and contained no unexpected PCI endpoints. This
+evidence enables the guarded release path for a controlled first removal test;
+no live PCI removal had been performed at the time of this report.
 
 Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
 The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and

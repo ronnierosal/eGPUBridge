@@ -103,7 +103,7 @@ Video reference:
 
 ### EGB-003 - Replace both unsafe disconnect implementations
 
-Status: In progress - guarded release implemented; destructive step remains disabled pending read-only hardware validation
+Status: In progress - guarded release enabled for controlled Ally X/GPD G1 hardware validation
 
 `prepare_for_unplug` restarts SDDM, sleeps eight seconds, and announces readiness
 without proving that the internal panel is active or that the eGPU is idle. The
@@ -147,9 +147,9 @@ Current safe foundation:
   syncs filesystems, removes the exact G1 parent PCI bridge, deauthorizes only the
   matched USB4 device, and reports safe-to-unplug only after the G1 disappears and
   the internal display remains active.
-- Hardware release remains disabled until the new token-free readiness snapshot
-  is collected and reviewed on the Ally X/GPD G1. The old destructive paths stay
-  disabled permanently.
+- The token-free Decky-root readiness snapshot was collected and reviewed on the
+  Ally X/GPD G1 with zero blockers, so guarded release is enabled for a controlled
+  first hardware test. The old destructive paths stay disabled permanently.
 - The misleading disabled eject control is replaced by a read-only Disconnect
   Check. Both the title-bar icon and Recovery / Safety row show the same visible
   blocker report and explicitly confirm that no hardware was disconnected.

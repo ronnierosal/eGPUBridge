@@ -439,6 +439,61 @@ after the blocking `systemctl restart` returned. Restart results now expose
 `total_elapsed_seconds` covering the systemd call plus readiness verification,
 while retaining the narrower readiness timer for diagnosis.
 
+### EGB-028 - Recover safely when sleep or resume changes eGPU availability
+
+Status: In progress - absent-GPU Gamescope startup failback implemented; automatic
+pre-suspend/resume orchestration and hardware validation pending
+
+If the Ally sleeps while Gamescope is bound to the G1, the system may wake after
+the G1 was powered off or unplugged. External-only output and a stale Vulkan
+device preference can otherwise leave the user with a black or failed Game Mode
+session. The Gamescope shim now verifies that the configured vendor/device exists
+in PCI sysfs before applying eGPU arguments. When it is absent, the new process
+starts with `-O *,eDP-1`, clears its Mesa device selector, and drops the external
+mode override. Plugin startup then persists that verified internal failback and
+clears the user-manager selector.
+
+Remaining acceptance criteria:
+
+- Validate suspend/resume with the G1 remaining attached and powered.
+- Validate waking after the G1 is powered off or removed during sleep.
+- Add a debounced resume observer that distinguishes slow enumeration from an
+  absent device and never races a valid G1 reconnect.
+- If the existing Gamescope process survives resume but its GPU disappeared,
+  recover the internal panel and restart the session with a bounded verifier.
+- Capture a durable `suspend`, `resume`, device-present/absent, action, and outcome
+  record without exposing local identifiers.
+- Always prefer a working internal display over automatic return to the eGPU;
+  switching external again can remain a deliberate user action.
+
+### EGB-029 - Define safe behavior for in-game eGPU removal
+
+Status: Open - safety guard exists; seamless GPU migration requires feasibility
+testing and must not be promised
+
+A running Vulkan/DirectX game normally creates queues and memory on one physical
+GPU and cannot migrate that live device to the Ally iGPU. Suspending the process
+does not recreate its graphics device. Removing the G1 while a game still owns it
+can therefore cause device loss, a hang, or a game crash even if the display has
+already switched to the internal panel.
+
+The supported workflow must first identify exact processes, Steam scopes, DRM
+nodes, child USB devices, and mounted storage using the selected G1 topology.
+While any game or non-migratable GPU client owns the G1, Safe Disconnect should
+remain blocked and explain why. A future experiment may preserve a game only when
+it was already rendering on the iGPU, or through an explicitly game-specific
+save/exit/relaunch flow; it must not claim transparent migration.
+
+Acceptance criteria:
+
+- Enumerate users of the exact eGPU card and render nodes, not every DRM process.
+- Switch and verify Gamescope on the internal GPU/display before removal.
+- Re-check eGPU clients after the session handoff and block while any remain.
+- Include mounted storage and USB children in the same readiness result.
+- Never expose a force-unplug override as “safe.”
+- Test game-specific outcomes separately and record whether the game continued,
+  recovered through relaunch, or could not be preserved.
+
 ## Completed in the fork, pending hardware verification
 
 - Connected versus active display detection was separated.

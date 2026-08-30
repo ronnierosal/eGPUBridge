@@ -3453,6 +3453,40 @@ def write_gamescope_wrapper_config(output_order: str, prefer_vk_device: str = "d
     }
 
 
+def reconcile_missing_egpu_configuration(status: dict) -> dict:
+    """Persist the shim's internal-display failback after an absent-eGPU startup."""
+    current = status or {}
+    if current.get("egpu"):
+        return {"ok": True, "changed": False, "reason": "egpu_present"}
+
+    gamescope = str(current.get("gamescope") or "")
+    live_output = _gamescope_output_order(gamescope)
+    if not _output_order_targets_internal(live_output):
+        return {"ok": True, "changed": False, "reason": "internal_gamescope_not_verified"}
+
+    patch = current.get("patch_state") or gamescope_patch_state()
+    configured_output = str(patch.get("output_order") or "")
+    configured_device = str(patch.get("prefer_vk_device") or "")
+    stale_external = (
+        bool(configured_output) and not _output_order_targets_internal(configured_output)
+    ) or _is_valid_egpu_vk_id(configured_device)
+    if not stale_external:
+        return {"ok": True, "changed": False, "reason": "internal_configuration_current"}
+
+    config = write_gamescope_wrapper_config("*,eDP-1", "disabled")
+    mode = write_gamescope_mode_config(disabled=True)
+    environment = update_gamescope_user_environment(unset=["MESA_VK_DEVICE_SELECT"])
+    ok = bool(config.get("ok") and mode.get("ok") and environment.get("ok"))
+    return {
+        "ok": ok,
+        "changed": True,
+        "action": "missing_egpu_internal_failback",
+        "configuration": config,
+        "mode": mode,
+        "user_environment": environment,
+    }
+
+
 def _gamescope_vk_device(gs_cmdline: str) -> str:
     match = re.search(r"--prefer-vk-device(?:=|\s+)([0-9a-fA-F]{4}:[0-9a-fA-F]{4})", gs_cmdline or "")
     return match.group(1).lower() if match else ""
@@ -3769,6 +3803,12 @@ class Plugin:
     async def _main(self):
         log(f"init v{VERSION}")
         status = build_status()
+        try:
+            recovery = reconcile_missing_egpu_configuration(status)
+            if recovery.get("changed") or not recovery.get("ok"):
+                log("init missing-eGPU recovery: " + json.dumps(recovery, ensure_ascii=False))
+        except Exception as e:
+            log(f"init missing-eGPU recovery failed: {e}")
         try:
             transition = reconcile_display_transition(status.get("gamescope") or "")
             if transition:

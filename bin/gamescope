@@ -41,6 +41,38 @@ case "$prefer_vk_device" in
         ;;
 esac
 
+configured_pci_device_present() {
+    local sysfs_root="${EGPUBRIDGE_SYSFS_PCI_DEVICES:-/sys/bus/pci/devices}"
+    local wanted_vendor="0x${prefer_vk_device%%:*}"
+    local wanted_device="0x${prefer_vk_device##*:}"
+    local vendor_path device_path actual_vendor actual_device
+
+    [[ -d "$sysfs_root" ]] || return 1
+    for vendor_path in "$sysfs_root"/*/vendor; do
+        [[ -r "$vendor_path" ]] || continue
+        device_path="${vendor_path%/vendor}/device"
+        [[ -r "$device_path" ]] || continue
+        actual_vendor="$(tr -d '[:space:]' < "$vendor_path")"
+        actual_device="$(tr -d '[:space:]' < "$device_path")"
+        if [[ "${actual_vendor,,}" == "${wanted_vendor,,}" && "${actual_device,,}" == "${wanted_device,,}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Suspend, power loss, or an unplug while asleep can leave an external-only
+# configuration behind. Never ask a new Gamescope process to use a GPU that is
+# no longer present: fail back to the internal panel and clear the per-process
+# Mesa selector. The backend will reconcile the persisted state after startup.
+if [[ -n "$prefer_vk_device" ]] && ! configured_pci_device_present; then
+    echo >&2 "eGPUBridge: configured GPU $prefer_vk_device is absent; starting Gamescope on the internal display"
+    output_order="*,eDP-1"
+    prefer_vk_device=""
+    mode=""
+    unset MESA_VK_DEVICE_SELECT
+fi
+
 mode_width=""
 mode_height=""
 mode_refresh=""

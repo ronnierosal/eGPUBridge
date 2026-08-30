@@ -73,6 +73,7 @@ jobs:
       - name: Smoke test Gamescope argument shim
         run: |
           actual="$(EGPUBRIDGE_PLUGIN_DIR="$PWD/tests/fixtures/shim-config" \
+            EGPUBRIDGE_SYSFS_PCI_DEVICES="$PWD/tests/fixtures/shim-sysfs" \
             EGPUBRIDGE_REAL_GAMESCOPE=/usr/bin/echo \
             bash bin/gamescope -O '*,eDP-1' --prefer-vk-device 1002:dead -w 1280 -h 800 -e)"
           expected='-O HDMI-A-2 -w 1280 -h 800 -e --prefer-vk-device 1002:7480 -W 1920 -H 1080 -r 60'
@@ -84,3 +85,9 @@ jobs:
             *'-- steam --prefer-vk-device client-argument') ;;
             *) exit 1 ;;
           esac
+          recovered="$(EGPUBRIDGE_PLUGIN_DIR="$PWD/tests/fixtures/shim-config" \
+            EGPUBRIDGE_SYSFS_PCI_DEVICES="$PWD/tests/fixtures/missing-shim-sysfs" \
+            MESA_VK_DEVICE_SELECT=1002:7480 \
+            EGPUBRIDGE_REAL_GAMESCOPE=/usr/bin/echo \
+            bash bin/gamescope -O HDMI-A-2 --prefer-vk-device 1002:7480 -w 1280 -h 800 -e)"
+          test "$recovered" = '-O *,eDP-1 -w 1280 -h 800 -e'

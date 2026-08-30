@@ -346,6 +346,47 @@ class GamescopeRestartTests(unittest.TestCase):
         )
 
 
+class MissingEgpuRecoveryTests(unittest.TestCase):
+    def test_internal_shim_failback_replaces_stale_external_configuration(self):
+        status_payload = {
+            "egpu": None,
+            "gamescope": "22 gamescope -O *,eDP-1",
+            "patch_state": {
+                "output_order": "HDMI-A-1",
+                "prefer_vk_device": "1002:7480",
+            },
+        }
+        with mock.patch.object(
+            main,
+            "write_gamescope_wrapper_config",
+            return_value={"ok": True},
+        ) as config_mock, mock.patch.object(
+            main,
+            "write_gamescope_mode_config",
+            return_value={"ok": True},
+        ), mock.patch.object(
+            main,
+            "update_gamescope_user_environment",
+            return_value={"ok": True},
+        ) as environment_mock:
+            result = main.reconcile_missing_egpu_configuration(status_payload)
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["changed"])
+        config_mock.assert_called_once_with("*,eDP-1", "disabled")
+        environment_mock.assert_called_once_with(unset=["MESA_VK_DEVICE_SELECT"])
+
+    def test_present_egpu_does_not_rewrite_configuration(self):
+        with mock.patch.object(main, "write_gamescope_wrapper_config") as config_mock:
+            result = main.reconcile_missing_egpu_configuration(
+                {"egpu": {"pci": "0000:08:00.0"}, "gamescope": "gamescope -O HDMI-A-1"}
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["changed"])
+        config_mock.assert_not_called()
+
+
 class GamescopeIntegrationTests(unittest.TestCase):
     def test_status_reports_an_unreadable_user_config_without_raising(self):
         context = {

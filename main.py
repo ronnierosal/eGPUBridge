@@ -3817,6 +3817,7 @@ _resume_last_detection_monotonic = 0.0
 RESUME_POLL_INTERVAL_SECONDS = 2.0
 RESUME_GAP_THRESHOLD_SECONDS = 1.0
 RESUME_DETECTION_DEBOUNCE_SECONDS = 5.0
+RESUME_DIRECT_EVENT_GRACE_SECONDS = 0.75
 
 
 def _schedule_display_restart(worker, desired: dict, transition: dict, delay_s: float = 1.0) -> dict:
@@ -4017,6 +4018,10 @@ def _handle_resume_detection(
     with _resume_detection_lock:
         since_last = detected_at - _resume_last_detection_monotonic
         if _resume_last_detection_monotonic and since_last < RESUME_DETECTION_DEBOUNCE_SECONDS:
+            log(
+                "RESUME_DETECTION duplicate ignored "
+                f"source={source} since_last={max(0.0, since_last):.3f}"
+            )
             return {
                 "ok": True,
                 "skipped": True,
@@ -4131,6 +4136,10 @@ def _resume_watcher_loop(stop_event):
         last_monotonic = now_monotonic
         if suspended_seconds < RESUME_GAP_THRESHOLD_SECONDS:
             continue
+        # login1 emits PrepareForSleep(false) on resume. Give that direct event a
+        # short chance to run before the clock-gap fallback claims the cycle.
+        if stop_event.wait(RESUME_DIRECT_EVENT_GRACE_SECONDS):
+            return
         _handle_resume_detection(
             clock_source,
             suspended_seconds=suspended_seconds,

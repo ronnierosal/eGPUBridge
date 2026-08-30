@@ -97,6 +97,13 @@ resume observer recorded `resume_no_external_configuration`. The attached
 G1/USB4 power-delivery or embedded-controller path is therefore the confirmed
 trigger category, while the two tested PCI wake toggles are ineffective.
 
+The first deployment of the native logind monitor passed a disconnected sleep
+cycle lasting about 67 seconds in hardware. It recorded `suspend_preparing`, kept
+Decky active and Gamescope internal, and performed recovery once. The clock-gap
+fallback won a resume-time scheduling race before the direct signal was processed,
+so a 0.75-second fallback grace period was added; hardware revalidation of direct
+resume precedence remains pending.
+
 Power-off/removal began at 12:42:43 and AMDGPU cleanup messages ended at 12:43:11.
 The G1 PCI device then disappeared and the Ally remained usable. EGB-003 and
 EGB-024 track the safe-unplug and removal-reconciliation work.

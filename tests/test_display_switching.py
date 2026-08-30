@@ -487,7 +487,7 @@ class ResumeRecoveryTests(unittest.TestCase):
 
     def test_resume_watcher_detects_a_short_s2idle_cycle(self):
         stop_event = mock.Mock()
-        stop_event.wait.side_effect = [False, True]
+        stop_event.wait.side_effect = [False, False, True]
         with mock.patch.object(
             main,
             "_suspend_inclusive_clock",
@@ -512,6 +512,13 @@ class ResumeRecoveryTests(unittest.TestCase):
             },
         )
         recover_mock.assert_called_once_with(stop_event=stop_event)
+        self.assertEqual(
+            stop_event.wait.call_args_list[:2],
+            [
+                mock.call(main.RESUME_POLL_INTERVAL_SECONDS),
+                mock.call(main.RESUME_DIRECT_EVENT_GRACE_SECONDS),
+            ],
+        )
 
     def test_direct_and_fallback_resume_detections_are_debounced(self):
         with mock.patch.object(

@@ -104,8 +104,8 @@ python3 -m unittest discover -s tests -v
 ```
 
 `src/index.tsx` and `src/backend.ts` are authoritative. Commit the generated
-`dist/index.js` and source map with frontend changes; CI rebuilds them and fails
-if the checked-in bundle has drifted. The large legacy UI remains temporarily
+`dist/index.js` with frontend changes; CI rebuilds it and fails if the checked-in
+bundle has drifted. The large legacy UI remains temporarily
 `@ts-nocheck`, while the native Decky RPC registry and build configuration are
 type-checked normally.
 

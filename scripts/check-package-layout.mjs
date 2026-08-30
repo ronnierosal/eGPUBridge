@@ -2,7 +2,6 @@ import fs from "node:fs";
 
 const required = [
   "dist/index.js",
-  "dist/index.js.map",
   "src/index.tsx",
   "src/backend.ts",
   "main.py",

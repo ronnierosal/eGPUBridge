@@ -2188,4 +2188,3 @@ var index = definePlugin(createPlugin);
 // HOTKEY_UI_BUTTONS_81109
 
 export { index as default };
-//# sourceMappingURL=index.js.map

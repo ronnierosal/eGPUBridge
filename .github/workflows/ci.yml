@@ -32,7 +32,7 @@ jobs:
         run: pnpm build
 
       - name: Verify generated frontend is committed
-        run: git diff --exit-code -- dist/index.js dist/index.js.map
+        run: git diff --exit-code -- dist/index.js
 
       - name: Check native Decky frontend contract
         run: pnpm check:frontend-contract

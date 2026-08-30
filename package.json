@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "rollup -c && node scripts/normalize-generated.mjs",
-    "build:check": "rollup -c && node scripts/normalize-generated.mjs && git diff --exit-code -- dist/index.js dist/index.js.map",
+    "build:check": "rollup -c && node scripts/normalize-generated.mjs && git diff --exit-code -- dist/index.js",
     "check:frontend-contract": "node scripts/check-native-frontend.mjs",
     "check:package": "node scripts/check-package-layout.mjs",
     "smoke:bundle": "node scripts/smoke-native-bundle.mjs",

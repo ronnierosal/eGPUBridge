@@ -631,6 +631,7 @@ class RunningGameTests(unittest.TestCase):
         units = """\
 app-steam-1234.scope loaded active running Game 1234
 steam-app-5678.scope loaded active running Game 5678
+app-steam-app2909400-37187.scope loaded active running Game 2909400
 app-com.valvesoftware.Steam.scope loaded active running Steam
 gamescope-session.scope loaded active running Gamescope
 """
@@ -640,8 +641,19 @@ gamescope-session.scope loaded active running Gamescope
         ):
             result = main._running_steam_games()
 
-        self.assertEqual(result["count"], 2)
-        self.assertEqual([game["appid"] for game in result["games"]], [1234, 5678])
+        self.assertEqual(result["count"], 3)
+        self.assertEqual([game["appid"] for game in result["games"]], [1234, 5678, 2909400])
+
+    def test_unparsed_current_steam_game_scope_fails_safe(self):
+        units = "app-steam-appunknown-instance.scope loaded active running Unknown game\n"
+        context = {"username": "ally", "uid": 1000, "source": "test"}
+        with mock.patch.object(main, "_gamescope_user_context", return_value=context), mock.patch.object(
+            main, "run", return_value={"ok": True, "rc": 0, "out": units, "err": ""}
+        ), mock.patch.object(main, "log"):
+            result = main._running_steam_games()
+
+        self.assertEqual(result["count"], 1)
+        self.assertIsNone(result["games"][0]["appid"])
 
 
 class GamescopeRestartTests(unittest.TestCase):

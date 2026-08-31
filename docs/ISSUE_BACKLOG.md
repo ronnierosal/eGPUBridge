@@ -85,6 +85,13 @@ and produced no visible restart. The no-restart path still normalized stale
 persisted external output and Mesa GPU-selection files to the internal desired
 state.
 
+The first running-game guard test then exposed a scope-name gap: current SteamOS
+reported `app-steam-app2909400-37187.scope`, which was not matched by the legacy
+scope parser. Gamescope restarted and the game closed. The parser now covers that
+current form, retains the legacy forms, and fails safe for unparsed
+`app-steam-app*.scope` units. Unit coverage passes; corrected Ally hardware
+validation is pending.
+
 Relevant code:
 
 - [`main.py`](../main.py#L3162)

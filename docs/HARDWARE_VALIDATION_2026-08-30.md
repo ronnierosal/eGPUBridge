@@ -225,6 +225,23 @@ self-healed stale persisted external settings: `output_order.conf` changed from
 observed activation; this is retained as an observation for a later controller
 activation check, but it did not cause a duplicate transition or restart.
 
+The first running-game protection test failed and exposed a concrete SteamOS
+scope-name compatibility bug. Immediately before the external transition,
+systemd reported the running game as
+`app-steam-app2909400-37187.scope`. The detector only recognized the older
+`app-steam-<appid>.scope` and `steam-app-<appid>.scope` forms, returned an empty
+game list, and allowed Gamescope to restart; Steam displayed its shutdown notice
+and the game closed. The detector now recognizes the observed current SteamOS
+form and conservatively treats an unparsed `app-steam-app*.scope` as a running
+game. Regression coverage uses the exact observed unit name; corrected hardware
+validation remains pending.
+
+That transition also produced a degraded 15-minute PCIe health summary with 203
+AER events, eight non-fatal recovery failures, and eight xHCI `can't recover`
+records in the G1 topology. The display transition still completed, but this is
+additional evidence for minimizing Gamescope/display churn and continuing the
+EGB-023 cable/port investigation.
+
 ## Still to validate
 
 - Repeat several external/internal cycles without launching a game during the

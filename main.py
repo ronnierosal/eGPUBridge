@@ -5054,9 +5054,24 @@ def _running_steam_games() -> dict:
     if result.get("ok"):
         for line in (result.get("out") or "").splitlines():
             unit = line.split(None, 1)[0] if line.split() else ""
-            match = re.search(r"(?:app-steam|steam-app)-(\d+)\.scope$", unit)
-            if match:
-                games.append({"appid": int(match.group(1)), "unit": unit, "summary": line.strip()[:500]})
+            # Current SteamOS uses app-steam-app<appid>-<instance>.scope while
+            # older releases and test environments use app-steam-<appid>.scope
+            # or steam-app-<appid>.scope. Treat an unparsed current-style scope
+            # as a game too, so a naming change cannot silently bypass the guard.
+            match = re.search(
+                r"^(?:app-steam-app(?P<current>\d+)(?:-.+)?|(?:app-steam|steam-app)-(?P<legacy>\d+))\.scope$",
+                unit,
+            )
+            current_style = unit.startswith("app-steam-app") and unit.endswith(".scope")
+            if match or current_style:
+                appid_text = (match.group("current") or match.group("legacy")) if match else ""
+                games.append({
+                    "appid": int(appid_text) if appid_text else None,
+                    "unit": unit,
+                    "summary": line.strip()[:500],
+                })
+    if games:
+        log("RUNNING_GAMES detected=" + ",".join(game["unit"] for game in games))
     return {
         "ok": bool(result.get("ok")),
         "games": games,

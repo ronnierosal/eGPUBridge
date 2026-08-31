@@ -234,13 +234,40 @@ game list, and allowed Gamescope to restart; Steam displayed its shutdown notice
 and the game closed. The detector now recognizes the observed current SteamOS
 form and conservatively treats an unparsed `app-steam-app*.scope` as a running
 game. Regression coverage uses the exact observed unit name; corrected hardware
-validation remains pending.
+validation was completed later the same day.
 
 That transition also produced a degraded 15-minute PCIe health summary with 203
 AER events, eight non-fatal recovery failures, and eight xHCI `can't recover`
 records in the G1 topology. The display transition still completed, but this is
 additional evidence for minimizing Gamescope/display churn and continuing the
 EGB-023 cable/port investigation.
+
+The corrected running-game guard then passed on the deployed Ally build. The
+active game appeared as `app-steam-app2909400-43899.scope`; eGPUBridge logged it,
+showed the native `Display switch blocked` dialog, and did not create a display
+transition. The game scope remained active, Gamescope kept PID `38083`, and its
+external command remained `-O HDMI-A-1 --prefer-vk-device 1002:7480`. The game
+survived and the TV stayed active. The post-test evidence is saved under
+`test-results/20260830-185523`.
+
+After the game exited normally and its scope disappeared, `Restore Internal`
+completed in 4.303 seconds. Gamescope changed from PID `38083` to `45131`, selected
+the Ally's `eDP-1` panel with `-O *,eDP-1`, and cleared the Mesa eGPU selector.
+Repeating `Restore Internal` while already internal kept PID `45131`, created no
+transition, and caused no visible flicker or delay. This evidence is saved under
+`test-results/20260830-185650`; its closing 15-minute link summary was degraded
+with 43 AER events and 20 combined recovery-related records.
+
+The final no-game round trip also passed. Smart Switch changed Gamescope from PID
+`45131` to `47959` in 5.9 seconds, re-proved the persisted G1 identity at
+`0000:08:00.0`, selected `HDMI-A-1`, and used the RX 7600M XT through
+`--prefer-vk-device 1002:7480`. Gamescope read the Samsung TV EDID and selected a
+physical `3840x2160@60` mode; the session later reported `1920x1080@60` for its
+rendered Xwayland mode. The final Restore Internal changed PID `47959` to `50436`
+in 4.615 seconds and returned to `-O *,eDP-1`. The complete round-trip capture is
+`test-results/20260830-190017`; its final 15-minute summary was degraded with 52
+AER events and 36 combined recovery-related records. No physical unplug was
+attempted.
 
 ## Still to validate
 
@@ -249,12 +276,13 @@ EGB-023 cable/port investigation.
 - Compare both Ally USB4 ports and at least one other certified USB4 cable.
 - Verify TV audio routing, controller navigation, HDR, suspend/resume, and Decky
   recovery after each Game Mode restart.
-- Verify running-game protection rather than overriding it during normal use.
 - Exercise timeout and rollback behavior in a controlled failure test.
 - Re-run after EGB-023 link-health diagnostics are implemented and compare the
   warning rate across cables and both Ally USB4 ports.
 
 Conclusion: the fork's primary Ally X/GPD G1 switching path and the combined
-reliability/native-stage-2 build both passed supervised live external/internal
-round trips. The fork is ready for focused follow-up testing, not yet for a claim
-of complete hardware validation or a broad upstream release.
+reliability/native-stage-2 build passed supervised external/internal round trips,
+idempotent internal restore, and fail-closed running-game protection. It is a
+validated reference for these specific behaviors on the tested hardware. Link
+stability, failure rollback, audio/HDR, cable/port comparisons, physical unplug,
+and active-GPU migration remain outside that claim.

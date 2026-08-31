@@ -18,6 +18,8 @@ launches Gamescope.
 
 - [eGPUBridge for Windows](https://github.com/ronnierosal/eGPUBridge-Windows)
 - [Shared cross-platform feature contract](docs/CROSS_PLATFORM_PARITY.md)
+- [Validated implementation reference](docs/IMPLEMENTATION_REFERENCE.md)
+- [HDM factual handoff](docs/HDM_REFERENCE_HANDOFF.md)
 
 The projects share product behavior, terminology, safety rules, diagnostics, and
 feature planning. Their native display and session implementations remain
@@ -31,7 +33,7 @@ platform-specific.
 - **NVIDIA telemetry** — driver mutation is intentionally disabled in this AMD-focused fork
 - **Dock Detection** — USB4/Thunderbolt dock status, ASMedia 246x identification
 - **PCIe Link Health** — read-only AER/recovery summary tied to the validated G1 topology
-- **Fail-closed unplug control** — PCI removal stays disabled until topology and storage checks exist
+- **Shutdown-before-unplug safety** — live G1 removal is disabled after a validated teardown hang
 - **Gamepad UI** — fully navigable with Steam Deck gamepad controls
 - **Recovery Hotkeys** — hardware button combos for display recovery
 
@@ -40,7 +42,7 @@ platform-specific.
 | Device / setup | Status |
 |---|---|
 | Lenovo Legion Go S + AMD RX 9070 + ASMedia USB4 | Tested by the upstream author |
-| ASUS ROG Ally X + GPD G1 | Initial on-device external/internal switching validation passed; extended reliability testing remains |
+| ASUS ROG Ally X + GPD G1 | Switching, internal restore/idempotency, and running-game blocking validated; USB4/PCIe link remains degraded |
 | Other AMD handheld/eGPU combinations | Expected to work through runtime DRM discovery; unverified |
 | NVIDIA eGPUs | Telemetry only; driver and PCI mutation are disabled |
 

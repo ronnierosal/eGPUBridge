@@ -90,7 +90,13 @@ reported `app-steam-app2909400-37187.scope`, which was not matched by the legacy
 scope parser. Gamescope restarted and the game closed. The parser now covers that
 current form, retains the legacy forms, and fails safe for unparsed
 `app-steam-app*.scope` units. Unit coverage passes; corrected Ally hardware
-validation is pending.
+validation passed later the same day. With
+`app-steam-app2909400-43899.scope` active, Restore Internal showed `Display switch
+blocked`, kept Gamescope PID `38083`, left the TV session unchanged, and preserved
+the running game. After the scope disappeared, normal internal restore completed
+in 4.303 seconds; a repeated already-internal request kept PID `45131` and skipped
+the restart. The final no-game internal-to-TV-to-internal round trip completed in
+5.9 and 4.615 seconds.
 
 Relevant code:
 
@@ -735,6 +741,12 @@ plugin. Regression tests lock both boundaries.
 
 Status: Backlog - not implemented or hardware-validated
 
+An informal test showed higher frame rates and audible G1 fan activity while the
+Ally panel was visible. That is not proof of this mode: no live Gamescope command,
+per-process Vulkan device, or comparable workload capture established that the G1
+rendered the frames. The current explicit internal mode still clears the eGPU
+selector, so EGB-035 remains open and unproven.
+
 Add a third operating mode between the existing portable and TV modes: keep the
 ROG Ally X internal `eDP` panel active while selecting the GPD G1 RX 7600M XT as
 Gamescope's rendering GPU. The expected Gamescope configuration is an internal
@@ -773,7 +785,7 @@ Requirements:
   Record performance at the same resolution on the internal-eGPU and direct-TV
   paths so the USB4 frame-return cost is visible to users.
 
-## Completed in the fork, pending hardware verification
+## Completed in the fork; core switching hardware-validated
 
 - Connected versus active display detection was separated.
 - Generic HDMI/DisplayPort connector handling was added.
@@ -788,13 +800,14 @@ Requirements:
 - Unsafe unplug, fan/OD clock, and NVIDIA driver mutation controls fail closed in
   both the UI and backend.
 - Missing internal DRM connector IDs now fail closed instead of guessing ID 108.
-- Eighty deterministic backend tests and CI checks are passing locally.
+- Eighty-one deterministic backend tests and CI checks are passing locally.
 - A Windows SSH harness can deploy with rollback backup, capture before/live/after
   evidence, and redact saved reports without installing Codex on the target.
 
-The primary switching path received its first ROG Ally X plus GPD G1 hardware
-pass on 2026-08-30: the plugin loaded without Decky errors, detected the G1 and
-TV, switched Gamescope to the RX 7600M XT and external HDMI connector, rendered a
-game at a reported steady 60 FPS, and returned to the internal panel. Broader
-hardware verification remains open for repeated cycles, failure recovery, audio,
-controller navigation, cable/port comparisons, and the issues recorded above.
+The primary switching path received its final reference pass on the ROG Ally X
+plus GPD G1 on 2026-08-30. The corrected running-game guard visibly blocked an
+internal transition without restarting Gamescope or closing the game. After the
+game exited, normal internal restore and an already-internal no-op passed, followed
+by a clean no-game internal-to-TV-to-internal round trip. Broader verification
+remains open for controlled rollback failure, audio, HDR, controller navigation,
+cable/port comparisons, and the issues recorded above.

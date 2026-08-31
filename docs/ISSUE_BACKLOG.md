@@ -79,6 +79,12 @@ The visible native TV-input confirmation is now the authoritative warning, the
 unreliable toast dependency was removed, and the efficient one-second RPC handoff
 delay was restored.
 
+The same-day idempotency check also passed on hardware. Requesting `Restore
+Internal` while Gamescope already used `-O *,eDP-1` kept the same Gamescope PID
+and produced no visible restart. The no-restart path still normalized stale
+persisted external output and Mesa GPU-selection files to the internal desired
+state.
+
 Relevant code:
 
 - [`main.py`](../main.py#L3162)

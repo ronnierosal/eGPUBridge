@@ -216,6 +216,15 @@ switch RPC because restarting Gamescope tore down the calling UI socket first.
 The UI returned and the transition succeeded, but this live evidence confirms the
 remaining asynchronous handoff work in EGB-002.
 
+An idempotent `Restore Internal` check then passed while the Ally panel was
+already active. Gamescope kept PID `26606`, its command line remained
+`-O *,eDP-1`, and neither Game Mode nor the display restarted. The request also
+self-healed stale persisted external settings: `output_order.conf` changed from
+`HDMI-A-2` to `*,eDP-1` and `prefer_vk_device.conf` changed from `1002:7480` to
+`disabled`. The plugin log recorded two closely spaced UI calls for the single
+observed activation; this is retained as an observation for a later controller
+activation check, but it did not cause a duplicate transition or restart.
+
 ## Still to validate
 
 - Repeat several external/internal cycles without launching a game during the
@@ -223,7 +232,6 @@ remaining asynchronous handoff work in EGB-002.
 - Compare both Ally USB4 ports and at least one other certified USB4 cable.
 - Verify TV audio routing, controller navigation, HDR, suspend/resume, and Decky
   recovery after each Game Mode restart.
-- Verify idempotency: requesting the already-active target must skip the restart.
 - Verify running-game protection rather than overriding it during normal use.
 - Exercise timeout and rollback behavior in a controlled failure test.
 - Re-run after EGB-023 link-health diagnostics are implemented and compare the

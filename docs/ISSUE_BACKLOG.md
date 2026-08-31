@@ -483,6 +483,11 @@ scoped to the three diagnostics rows and summary field, resets their width and
 margins, and passes explicitly sized React nodes to the native controls rather
 than changing global Decky typography.
 
+The follow-up deployment passed visual validation on the Ally screen. Device
+diagnostics, Summary, TV control, and Recent events all fit inside the accordion;
+the left edge is no longer clipped and the concise PCIe health result remains on
+one readable line.
+
 Before changing kernel settings, repeat the test with the cable reseated, a
 known-certified USB4 cable, and the other Ally USB4 port.
 

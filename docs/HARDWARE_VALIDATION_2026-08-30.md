@@ -107,7 +107,10 @@ that Decky's native `ButtonItem` and `Field` containers retained oversized defau
 labels and a negative horizontal offset inside the custom accordion. A narrower
 follow-up now resets only the diagnostics-row width/margins and supplies compact
 React labels, descriptions, actions, and nine-pixel summary text. This avoids a
-global Decky font override; on-device confirmation remains pending.
+global Decky font override. The third on-device photo confirmed the diagnostics
+rows now fit within the Ally panel, the left edge is no longer clipped, the three
+native actions remain readable, and the PCIe summary fits on one line. The compact
+layout is hardware-validated.
 
 An attached-G1 suspend test later entered `s2idle` at 13:53:56 and 13:54:11, then
 resumed about four seconds after each attempt without operator input. The resume

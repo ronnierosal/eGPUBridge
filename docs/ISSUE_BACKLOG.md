@@ -476,6 +476,13 @@ original long headline were too large for the panel. The summary now uses compac
 11-pixel text, shorter labels, GiB memory, and a single combined plugin-log line;
 visual confirmation of that follow-up remains pending.
 
+A second on-device photo showed that shrinking only the summary contents was not
+enough: Decky's native row containers still applied large default labels and
+shifted their contents beyond the accordion's left edge. The next correction is
+scoped to the three diagnostics rows and summary field, resets their width and
+margins, and passes explicitly sized React nodes to the native controls rather
+than changing global Decky typography.
+
 Before changing kernel settings, repeat the test with the cable reseated, a
 known-certified USB4 cable, and the other Ally USB4 port.
 

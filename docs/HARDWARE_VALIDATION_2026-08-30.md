@@ -102,6 +102,13 @@ headline wrapped poorly on the Ally panel. The follow-up uses an 11-pixel compac
 summary, shorter labels, GiB memory display, and a concise health headline; that
 layout still requires visual confirmation after deployment.
 
+The second photo confirmed the data text and headline had changed, but also proved
+that Decky's native `ButtonItem` and `Field` containers retained oversized default
+labels and a negative horizontal offset inside the custom accordion. A narrower
+follow-up now resets only the diagnostics-row width/margins and supplies compact
+React labels, descriptions, actions, and nine-pixel summary text. This avoids a
+global Decky font override; on-device confirmation remains pending.
+
 An attached-G1 suspend test later entered `s2idle` at 13:53:56 and 13:54:11, then
 resumed about four seconds after each attempt without operator input. The resume
 path reported `BadTLP`, non-fatal `ACSViol`, failed xHCI recovery at

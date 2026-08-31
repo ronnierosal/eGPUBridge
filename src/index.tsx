@@ -2316,6 +2316,8 @@ function App(props) {
 
         e("style", null, ".egbDebugToggleWrap81318R7{box-sizing:border-box!important;overflow:hidden!important;contain:paint!important;}.egbDebugToggleWrap81318R7 *{box-sizing:border-box!important;}.egbDebugToggleStable81318R7{box-sizing:border-box!important;transform:none!important;overflow:hidden!important;contain:paint!important;outline:2px solid transparent!important;outline-offset:-4px!important;max-width:100%!important;}.egbDebugToggleStable81318R7:focus,.egbDebugToggleStable81318R7:focus-visible,.egbDebugToggleWrap81318R7 button:focus,.egbDebugToggleWrap81318R7 button:focus-visible,.egbDebugToggleWrap81318R7 [role=button]:focus,.egbDebugToggleWrap81318R7 [role=button]:focus-visible{transform:none!important;outline:2px solid rgba(255,255,255,.78)!important;outline-offset:-4px!important;box-shadow:inset 0 0 0 2px rgba(255,255,255,.32),0 0 0 1px rgba(255,255,255,.06)!important;max-width:100%!important;overflow:hidden!important;}"),
 
+        e("style", null, "/* EGB_DIAGNOSTICS_COMPACT_ALLY */\n.egbDiagnosticNativeRow{width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;overflow:hidden!important;margin:0 0 4px 0!important;padding:0!important;}\n.egbDiagnosticNativeRow>*{width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;margin-left:0!important;margin-right:0!important;}\n.egbDiagnosticNativeRow *{box-sizing:border-box!important;min-width:0!important;}\n.egbDiagnosticNativeRow button,.egbDiagnosticNativeRow [role=button]{min-height:34px!important;height:auto!important;padding:4px 8px!important;font-size:10px!important;line-height:12px!important;}\n.egbDiagnosticLabel{font-size:10px!important;line-height:12px!important;font-weight:700!important;white-space:normal!important;}\n.egbDiagnosticDescription{font-size:8px!important;line-height:10px!important;font-weight:500!important;white-space:normal!important;}\n.egbDiagnosticAction{font-size:10px!important;line-height:12px!important;font-weight:700!important;white-space:nowrap!important;}\n.egbDiagnosticField{width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;margin:0!important;padding:6px 8px!important;overflow:hidden!important;}\n.egbDiagnosticField *{box-sizing:border-box!important;min-width:0!important;max-width:100%!important;}\n.egbDiagnosticFieldLabel{font-size:10px!important;line-height:12px!important;font-weight:700!important;}\n.egbDiagnosticSummary{font-size:9px!important;line-height:12px!important;font-weight:600!important;padding-left:0!important;margin-left:0!important;}"),
+
       e("style", null, "@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');"),
       e("style", null, "@keyframes egbRouteTicker81316 { 0% { transform: translate3d(0,0,0); } 100% { transform: translate3d(-33.333%,0,0); } }"),
       e("style", null, "@keyframes egpu-mode-blink{0%,100%{opacity:1;box-shadow:0 0 8px rgba(80,220,130,.60)}50%{opacity:.4;box-shadow:0 0 2px rgba(80,220,130,.15)}}"),
@@ -4091,29 +4093,32 @@ function App(props) {
         }, "Diagnostics"),
 
         // EGB-018 stage 2 start: read-only diagnostics use native Decky rows.
-        e(ButtonItem, {
-          label: "Device diagnostics",
-          description: "Redacted hardware and logs",
-          layout: "inline",
-          childrenContainerWidth: "min",
-          disabled: diagLoading,
-          onClick: function() {
-            if (diagLoading) return;
-            setDiagLoading(true);
-            call(serverApi, "collect_diagnostics", {}).then(function(res) {
-              setDiagLoading(false);
-              setDiagnostics(res);
-              setLast({ ok: res && res.ok, source: "diagnostics", message: "Diagnostics collected" });
-            }).catch(function(err) {
-              setDiagLoading(false);
-              setLast({ ok: false, source: "diagnostics", error: String(err) });
-            });
-          }
-        }, diagLoading ? "Collecting..." : "Run"),
+        e("div", { className: "egbDiagnosticNativeRow" },
+          e(ButtonItem, {
+            label: e("span", { className: "egbDiagnosticLabel" }, "Device diagnostics"),
+            description: e("span", { className: "egbDiagnosticDescription" }, "Redacted hardware and logs"),
+            layout: "inline",
+            childrenContainerWidth: "min",
+            disabled: diagLoading,
+            onClick: function() {
+              if (diagLoading) return;
+              setDiagLoading(true);
+              call(serverApi, "collect_diagnostics", {}).then(function(res) {
+                setDiagLoading(false);
+                setDiagnostics(res);
+                setLast({ ok: res && res.ok, source: "diagnostics", message: "Diagnostics collected" });
+              }).catch(function(err) {
+                setDiagLoading(false);
+                setLast({ ok: false, source: "diagnostics", error: String(err) });
+              });
+            }
+          }, e("span", { className: "egbDiagnosticAction" }, diagLoading ? "Collecting..." : "Run"))
+        ),
 
         // Diagnostics summary
         diagnostics ? e(Field, {
-          label: "Summary",
+          className: "egbDiagnosticField",
+          label: e("span", { className: "egbDiagnosticFieldLabel" }, "Summary"),
           childrenLayout: "below",
           padding: "compact",
           bottomSeparator: "none"
@@ -4124,8 +4129,8 @@ function App(props) {
               width: "100%",
               minWidth: 0,
               boxSizing: "border-box",
-              fontSize: "11px",
-              lineHeight: "14px",
+              fontSize: "9px",
+              lineHeight: "12px",
               fontWeight: "600",
               color: "rgba(225,232,245,.88)",
               overflowWrap: "anywhere"
@@ -4146,21 +4151,25 @@ function App(props) {
           )
         ) : null,
 
-        e(ButtonItem, {
-          label: "TV Control Health",
-          description: "Read current ADB and TV power-light status",
-          layout: "inline",
-          childrenContainerWidth: "min",
-          onClick: function() { doCall("tv_control_health", {}); call(serverApi, "tv_power_light", {}).then(function(res) { setTvPowerLight(res); }).catch(function() {}); }
-        }, "Check"),
+        e("div", { className: "egbDiagnosticNativeRow" },
+          e(ButtonItem, {
+            label: e("span", { className: "egbDiagnosticLabel" }, "TV control"),
+            description: e("span", { className: "egbDiagnosticDescription" }, "ADB and TV power status"),
+            layout: "inline",
+            childrenContainerWidth: "min",
+            onClick: function() { doCall("tv_control_health", {}); call(serverApi, "tv_power_light", {}).then(function(res) { setTvPowerLight(res); }).catch(function() {}); }
+          }, e("span", { className: "egbDiagnosticAction" }, "Check"))
+        ),
 
-        e(ButtonItem, {
-          label: "Recent Events",
-          description: "Load the last 10 redacted plugin events",
-          layout: "inline",
-          childrenContainerWidth: "min",
-          onClick: function() { loadRecentEvents(); }
-        }, "Load"),
+        e("div", { className: "egbDiagnosticNativeRow" },
+          e(ButtonItem, {
+            label: e("span", { className: "egbDiagnosticLabel" }, "Recent events"),
+            description: e("span", { className: "egbDiagnosticDescription" }, "Last 10 redacted events"),
+            layout: "inline",
+            childrenContainerWidth: "min",
+            onClick: function() { loadRecentEvents(); }
+          }, e("span", { className: "egbDiagnosticAction" }, "Load"))
+        ),
         // EGB-018 stage 2 end.
 
         // EGB-018 stage 1: native focus, activation, and theme behavior.

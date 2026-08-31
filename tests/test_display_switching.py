@@ -1507,10 +1507,12 @@ pcieport 0000:05:02.0: AER: device recovery failed
     def test_frontend_shows_the_compact_link_health_headline(self):
         frontend = (Path(__file__).parents[1] / "src" / "index.tsx").read_text(encoding="utf-8")
 
-        self.assertIn('label: "Device diagnostics"', frontend)
-        self.assertIn('label: "Summary"', frontend)
+        self.assertEqual(frontend.count('className: "egbDiagnosticNativeRow"'), 3)
+        self.assertIn('className: "egbDiagnosticLabel" }, "Device diagnostics"', frontend)
+        self.assertIn('className: "egbDiagnosticFieldLabel" }, "Summary"', frontend)
+        self.assertIn("EGB_DIAGNOSTICS_COMPACT_ALLY", frontend)
         self.assertIn('className: "egbDiagnosticSummary"', frontend)
-        self.assertIn('fontSize: "11px"', frontend)
+        self.assertIn('fontSize: "9px"', frontend)
         self.assertIn('"PCIe: "', frontend)
         self.assertIn("diagnostics.pcie_link_health.headline", frontend)
         self.assertIn("diagnostics.ram_gib", frontend)

@@ -1499,6 +1499,9 @@ function App(props) {
     call(serverApi, method, args || {}).then(function(res) {
       setLast(res);
       absorbUiResult(method, res);
+      if (res && !res.ok && (res.error_code === "running_game" || res.error_code === "running_game_check_failed")) {
+        showDisplaySwitchBlocked(res);
+      }
       var accepted = !!(res && (res.accepted || (res.switch_result && res.switch_result.accepted)));
       if (accepted) {
         return null;
@@ -1511,6 +1514,43 @@ function App(props) {
     }).finally(function() {
       setBusy(false);
     });
+  }
+
+  function showDisplaySwitchBlocked(res) {
+    var modalHandle = null;
+    function closeModal() {
+      if (modalHandle && typeof modalHandle.Close === "function") modalHandle.Close();
+    }
+    var gameCount = res && res.running_games && Number(res.running_games.count || 0);
+    var detail = res && res.error
+      ? String(res.error)
+      : "eGPUBridge could not safely verify whether a Steam game is running.";
+
+    modalHandle = showModal(
+      React.createElement(
+        ConfirmModal,
+        {
+          strTitle: "Display switch blocked",
+          strOKButtonText: "Close",
+          bHideCancelButton: true,
+          bDisableBackgroundDismiss: true,
+          onOK: closeModal,
+        },
+        e("div", { style: { fontSize: "14px", lineHeight: "20px" } },
+          e("p", { style: { margin: "0 0 10px", fontWeight: "700" } },
+            gameCount > 0
+              ? (gameCount === 1 ? "A Steam game is still running." : gameCount + " Steam games are still running.")
+              : "The running-game safety check did not complete."
+          ),
+          e("p", { style: { margin: "0 0 10px" } }, detail),
+          e("p", { style: { margin: "0" } },
+            "Game Mode was not restarted. Close the game, then try the display switch again."
+          )
+        )
+      ),
+      window,
+      { strTitle: "eGPUBridge", bNeverPopOut: true }
+    );
   }
 
   function confirmExternalDisplayHandoff(method, args) {
